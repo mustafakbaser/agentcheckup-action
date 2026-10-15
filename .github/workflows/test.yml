@@ -1,0 +1,250 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+# Steps run this action with `uses: $/`: the action at the commit being tested, loaded by the
+# runner, not the copy in the workspace that earlier steps could change.
+
+env:
+  # The agentcheckup commit the "packed CLI" job builds. No npm release has --context,
+  # --baseline and --gate yet, so the action gets that build through the test-only input
+  # test-package. See README.md, Testing.
+  AGENTCHECKUP_REF: 4827ac83e2002685e4f8d10d29c380b4e16a5b9e
+
+jobs:
+  scripts:
+    name: Scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # check out this repository
+    steps:
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: ShellCheck
+        run: shellcheck scripts/*.sh test/scripts.sh
+      - name: Script tests (fake CLI, local git server)
+        run: test/scripts.sh
+
+  action:
+    name: Action with a packed CLI
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # check out both repositories and fetch the pull request's base commit
+    steps:
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mustafakbaser/agentcheckup
+          ref: ${{ env.AGENTCHECKUP_REF }}
+          path: agentcheckup-src
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: agentcheckup-src/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: agentcheckup-src/.node-version
+      - name: Pack the CLI
+        working-directory: agentcheckup-src
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          mkdir -p "$RUNNER_TEMP/cli"
+          pnpm pack --pack-destination "$RUNNER_TEMP/cli"
+          mv "$RUNNER_TEMP"/cli/agentcheckup-*.tgz "$RUNNER_TEMP/cli/agentcheckup.tgz"
+      - name: Prepare base trees
+        # test-base-dir stands for the repository root at the base commit, so each fixture goes
+        # to the path the head fixture has: test/fixtures/head.
+        run: |
+          for name in base head; do
+            mkdir -p "$RUNNER_TEMP/base-$name/test/fixtures"
+            cp -R "test/fixtures/$name" "$RUNNER_TEMP/base-$name/test/fixtures/head"
+          done
+
+      - name: Run on changed configuration
+        id: changed
+        uses: $/
+        continue-on-error: true
+        with:
+          path: test/fixtures/head
+          sarif-file: ${{ runner.temp }}/changed.sarif
+          test-package: ${{ runner.temp }}/cli/agentcheckup.tgz
+          test-base-dir: ${{ runner.temp }}/base-base
+      - name: Check that the gate tripped
+        env:
+          OUTCOME: ${{ steps.changed.outcome }}
+          EXIT_CODE: ${{ steps.changed.outputs.exit-code }}
+          GATE_HITS: ${{ steps.changed.outputs.gate-hits }}
+          NEW_FINDINGS: ${{ steps.changed.outputs.new-findings }}
+          REPORT: ${{ steps.changed.outputs.report }}
+        run: |
+          set -x
+          test "$OUTCOME" = failure
+          test "$EXIT_CODE" = 1
+          test "$GATE_HITS" -ge 3
+          test "$NEW_FINDINGS" -ge 0
+          jq -e '[.baseline.gate.hits[].class]
+            | contains(["mcp-unpinned", "permissions", "env"])' "$REPORT"
+          jq -e '.version == "2.1.0"' "$RUNNER_TEMP/changed.sarif"
+
+      - name: Run on unchanged configuration
+        id: unchanged
+        uses: $/
+        continue-on-error: true
+        with:
+          path: test/fixtures/head
+          test-package: ${{ runner.temp }}/cli/agentcheckup.tgz
+          test-base-dir: ${{ runner.temp }}/base-head
+      - name: Check that the unchanged pair passes
+        env:
+          OUTCOME: ${{ steps.unchanged.outcome }}
+          EXIT_CODE: ${{ steps.unchanged.outputs.exit-code }}
+          GATE_HITS: ${{ steps.unchanged.outputs.gate-hits }}
+          NEW_FINDINGS: ${{ steps.unchanged.outputs.new-findings }}
+          REPORT: ${{ steps.unchanged.outputs.report }}
+        run: |
+          set -x
+          test "$OUTCOME" = success
+          test "$EXIT_CODE" = 0
+          test "$GATE_HITS" = 0
+          test "$NEW_FINDINGS" = 0
+          jq -e '.baseline.gate.hits == []' "$REPORT"
+
+      # On pull requests this fetches the real base commit; on pushes it scans without a baseline.
+      - name: Run for this event
+        id: event
+        uses: $/
+        continue-on-error: true
+        with:
+          path: test/fixtures/head
+          test-package: ${{ runner.temp }}/cli/agentcheckup.tgz
+      - name: Check the run for this event
+        env:
+          EVENT: ${{ github.event_name }}
+          EXIT_CODE: ${{ steps.event.outputs.exit-code }}
+          REPORT: ${{ steps.event.outputs.report }}
+        run: |
+          set -x
+          case $EXIT_CODE in
+            0 | 1) ;;
+            *) exit 1 ;;
+          esac
+          if [ "$EVENT" = pull_request ]; then
+            jq -e '.baseline != null' "$REPORT"
+          else
+            jq -e '.baseline == null' "$REPORT"
+          fi
+          # The checkout used persist-credentials: false, and the action must not add anything.
+          if git config --local --get-regexp 'extraheader'; then exit 1; fi
+
+  inputs:
+    name: Invalid inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read # check out this repository
+    steps:
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Version range
+        id: range
+        uses: $/
+        continue-on-error: true
+        with:
+          version: '^0.1.0'
+      - name: Version tag
+        id: tag
+        uses: $/
+        continue-on-error: true
+        with:
+          version: latest
+      - name: Path outside the repository
+        id: parent
+        uses: $/
+        continue-on-error: true
+        with:
+          path: ../outside
+      - name: Test package in the workspace
+        id: package
+        uses: $/
+        continue-on-error: true
+        with:
+          test-package: ${{ github.workspace }}/action.yml
+      - name: Check that each run was rejected with exit code 2
+        env:
+          RANGE: ${{ steps.range.outcome }}/${{ steps.range.outputs.exit-code }}
+          TAG: ${{ steps.tag.outcome }}/${{ steps.tag.outputs.exit-code }}
+          PARENT: ${{ steps.parent.outcome }}/${{ steps.parent.outputs.exit-code }}
+          PACKAGE: ${{ steps.package.outcome }}/${{ steps.package.outputs.exit-code }}
+        run: |
+          set -x
+          for result in "$RANGE" "$TAG" "$PARENT" "$PACKAGE"; do
+            test "$result" = failure/2
+          done
+
+  # Needs the version in action.yml on npm. Publish the CLI before pushing a version bump.
+  released-cli:
+    name: Action with the npm release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # check out this repository
+    steps:
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Prepare the base tree
+        run: |
+          mkdir -p "$RUNNER_TEMP/base-head/test/fixtures"
+          cp -R test/fixtures/head "$RUNNER_TEMP/base-head/test/fixtures/head"
+      - name: Run with the default version
+        id: released
+        uses: $/
+        with:
+          path: test/fixtures/head
+          test-base-dir: ${{ runner.temp }}/base-head
+      - name: Check the outputs
+        env:
+          EXIT_CODE: ${{ steps.released.outputs.exit-code }}
+          GATE_HITS: ${{ steps.released.outputs.gate-hits }}
+        run: |
+          set -x
+          test "$EXIT_CODE" = 0
+          test "$GATE_HITS" = 0
