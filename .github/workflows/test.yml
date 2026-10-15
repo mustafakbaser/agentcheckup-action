@@ -230,17 +230,31 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+      # Until the version the action pins is published, this job only reports that and passes.
+      - name: Check that the default version is on npm
+        id: published
+        run: |
+          version=$(sed -n "/^  version:/,/^  [a-z]/s/^    default: '\\(.*\\)'$/\\1/p" action.yml)
+          if npm view "agentcheckup@$version" version >/dev/null 2>&1; then
+            echo "available=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "::notice title=agentcheckup::agentcheckup $version is not on npm yet; skipping this job."
+            echo "available=false" >>"$GITHUB_OUTPUT"
+          fi
       - name: Prepare the base tree
+        if: steps.published.outputs.available == 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/base-head/test/fixtures"
           cp -R test/fixtures/head "$RUNNER_TEMP/base-head/test/fixtures/head"
       - name: Run with the default version
+        if: steps.published.outputs.available == 'true'
         id: released
         uses: $/
         with:
           path: test/fixtures/head
           test-base-dir: ${{ runner.temp }}/base-head
       - name: Check the outputs
+        if: steps.published.outputs.available == 'true'
         env:
           EXIT_CODE: ${{ steps.released.outputs.exit-code }}
           GATE_HITS: ${{ steps.released.outputs.gate-hits }}
