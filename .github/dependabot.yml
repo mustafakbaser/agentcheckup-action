@@ -1,0 +1,17 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    # "/" covers .github/workflows and action.yml at the root.
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    # Wait 7 days after a release before proposing it, so a compromised release has time to be
+    # noticed and pulled.
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ['*']
+    commit-message:
+      prefix: ci

@@ -1,0 +1,7 @@
+# Default owner for everything. The paths that decide what runs and with which token are listed
+# explicitly, so the rule survives if more owners are added for other areas.
+*                     @mustafakbaser
+/action.yml           @mustafakbaser
+/scripts/             @mustafakbaser
+/.github/workflows/   @mustafakbaser
+/.github/dependabot.yml @mustafakbaser

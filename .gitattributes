@@ -1,0 +1,3 @@
+# Normalize text files to LF in the repository. The scripts run in bash and must stay LF.
+* text=auto eol=lf
+*.sh text eol=lf
