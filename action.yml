@@ -1,0 +1,176 @@
+name: agentcheckup
+description: >-
+  Check coding-agent configuration in pull requests. Flags new MCP servers, hooks, permissions
+  and env overrides.
+author: Mustafa Kürşad BAŞER
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  version:
+    description: >-
+      Exact agentcheckup version to run, such as 0.1.0. Ranges and tags are rejected. The default
+      is the version this release of the action was tested with.
+    required: false
+    # The one place the pinned CLI version lives. Bump it as described in docs/releasing.md.
+    default: '0.1.0'
+  path:
+    description: Directory to scan, relative to the repository root.
+    required: false
+    default: '.'
+  gate:
+    description: >-
+      Security-relevant changes that fail the check on pull requests. "security" for all
+      classes, "none", or a comma-separated list of mcp, mcp-unpinned, permissions, hooks, env
+      and unicode.
+    required: false
+    default: 'security'
+  fail-on:
+    description: >-
+      Fail on new findings at or above this severity. One of error, warn, info or none.
+    required: false
+    default: 'error'
+  sarif-file:
+    description: >-
+      Also write a SARIF report to this path, for github/codeql-action/upload-sarif. Relative
+      paths start at the workspace. The directory must exist, inside the workspace or
+      runner.temp.
+    required: false
+    default: ''
+  comment:
+    description: >-
+      Create or update one pull request comment with the report. Needs the permission
+      pull-requests write. Skipped for pull requests from forks.
+    required: false
+    default: 'false'
+  targets:
+    description: >-
+      Comma-separated agents to check against, for example claude-code,codex,cursor. Default:
+      all.
+    required: false
+    default: ''
+  token:
+    description: >-
+      Token used only to fetch the base commit and to write the optional comment. Never passed
+      to agentcheckup.
+    required: false
+    default: ${{ github.token }}
+  test-package:
+    description: >-
+      Test only, for this action's own self-test. Absolute path to an agentcheckup .tgz inside
+      runner.temp, installed instead of the npm release. Do not set it in other workflows.
+    required: false
+    default: ''
+  test-base-dir:
+    description: >-
+      Test only, for this action's own self-test. Absolute path to a directory inside
+      runner.temp, used as the base tree instead of the pull request's base commit. Do not set
+      it in other workflows.
+    required: false
+    default: ''
+
+outputs:
+  exit-code:
+    description: >-
+      agentcheckup's exit code. 0 clean; 1 new findings at or above fail-on, or the gate
+      tripped; 2 invalid usage, or the action could not run; 3 internal error.
+    value: >-
+      ${{ steps.scan.outputs.exit-code || steps.base.outputs.exit-code ||
+      steps.install.outputs.exit-code || steps.prepare.outputs.exit-code }}
+  gate-hits:
+    description: >-
+      Number of gate hits, one per change and class (a new unpinned MCP server counts under both
+      mcp and mcp-unpinned). 0 without a baseline.
+    value: ${{ steps.scan.outputs.gate-hits }}
+  new-findings:
+    description: >-
+      Number of findings not in the baseline. Without a baseline, every finding is new. Empty
+      when no report was written.
+    value: ${{ steps.scan.outputs.new-findings }}
+  report:
+    description: Path of the JSON report in runner.temp. Empty when no report was written.
+    value: ${{ steps.scan.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check inputs
+      id: prepare
+      shell: bash
+      env:
+        AC_VERSION: ${{ inputs.version }}
+        AC_PATH: ${{ inputs.path }}
+        AC_GATE: ${{ inputs.gate }}
+        AC_FAIL_ON: ${{ inputs.fail-on }}
+        AC_SARIF_FILE: ${{ inputs.sarif-file }}
+        AC_COMMENT: ${{ inputs.comment }}
+        AC_TARGETS: ${{ inputs.targets }}
+        AC_TEST_PACKAGE: ${{ inputs.test-package }}
+        AC_TEST_BASE_DIR: ${{ inputs.test-base-dir }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/prepare.sh"
+
+    - name: Install agentcheckup
+      id: install
+      shell: bash
+      env:
+        AC_WORK: ${{ steps.prepare.outputs.work-dir }}
+        AC_VERSION: ${{ inputs.version }}
+        AC_TEST_PACKAGE: ${{ steps.prepare.outputs.test-package }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/install.sh"
+
+    # The only step besides the comment that gets the token.
+    - name: Export the base commit
+      id: base
+      if: steps.prepare.outputs.baseline == 'fetch'
+      shell: bash
+      env:
+        AC_WORK: ${{ steps.prepare.outputs.work-dir }}
+        AC_BASE_SHA: ${{ steps.prepare.outputs.base-sha }}
+        AC_BASE_ROOT: ${{ steps.prepare.outputs.base-root }}
+        AC_TOKEN: ${{ inputs.token }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/export-base.sh"
+
+    - name: Scan
+      id: scan
+      shell: bash
+      env:
+        AC_WORK: ${{ steps.prepare.outputs.work-dir }}
+        AC_CLI: ${{ steps.install.outputs.cli }}
+        AC_CLI_VERSION: ${{ steps.install.outputs.cli-version }}
+        AC_PATH: ${{ steps.prepare.outputs.path }}
+        AC_GATE: ${{ steps.prepare.outputs.gate }}
+        AC_FAIL_ON: ${{ steps.prepare.outputs.fail-on }}
+        AC_TARGETS: ${{ steps.prepare.outputs.targets }}
+        AC_SARIF_FILE: ${{ steps.prepare.outputs.sarif-file }}
+        AC_BASELINE: ${{ steps.prepare.outputs.baseline }}
+        AC_BASE_ROOT: ${{ steps.prepare.outputs.base-root }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/scan.sh"
+
+    - name: Comment on the pull request
+      if: inputs.comment == 'true'
+      shell: bash
+      env:
+        AC_WORK: ${{ steps.prepare.outputs.work-dir }}
+        AC_PR_NUMBER: ${{ steps.prepare.outputs.pr-number }}
+        AC_SAME_REPO: ${{ steps.prepare.outputs.same-repo }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/comment.sh"
+
+    - name: Set the result
+      shell: bash
+      env:
+        AC_EXIT_CODE: ${{ steps.scan.outputs.exit-code }}
+      run: |
+        case $AC_EXIT_CODE in
+          0) exit 0 ;;
+          1)
+            echo "::error title=agentcheckup::New findings or a tripped gate. See the job summary."
+            exit 1
+            ;;
+          '' | *[!0-9]*)
+            echo "::error title=agentcheckup::The scan step recorded no exit code."
+            exit 3
+            ;;
+          *) exit "$AC_EXIT_CODE" ;;
+        esac
