@@ -69,5 +69,7 @@ Finally, update the `@vX.Y.Z` examples in `README.md` in a pull request.
   and `zizmorcore/zizmor-action`, pinned to full commit SHAs.
 - `main`: pull requests with code owner review, required checks from `Test` and
   `Workflow security`, signed commits, linear history.
-- Tags: the `v*.*.*` ruleset above. Immutable releases on.
+- Tags: the `v*.*.*` ruleset above, and `v0` movable by admins only. Immutable releases on.
+- The rulesets are kept as JSON in `.github/rulesets/`. Apply one with
+  `gh api -X POST repos/OWNER/agentcheckup-action/rulesets --input .github/rulesets/<file>.json`.
 - Private vulnerability reporting points to the agentcheckup repository (see `SECURITY.md`).
