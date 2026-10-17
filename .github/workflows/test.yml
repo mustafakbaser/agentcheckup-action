@@ -20,9 +20,9 @@ defaults:
 
 env:
   # The agentcheckup commit the "packed CLI" job builds. No npm release has --context,
-  # --baseline and --gate yet, so the action gets that build through the test-only input
-  # test-package. See README.md, Testing.
-  AGENTCHECKUP_REF: 4827ac83e2002685e4f8d10d29c380b4e16a5b9e
+  # --baseline, --gate, --policy or suggestions yet, so the action gets that build through the
+  # test-only input test-package. See README.md, Testing.
+  AGENTCHECKUP_REF: ea2fdd7f60b0a423e2641d650814940801813b75
 
 jobs:
   scripts:
@@ -136,6 +136,37 @@ jobs:
           test "$GATE_HITS" = 0
           test "$NEW_FINDINGS" = 0
           jq -e '.baseline.gate.hits == []' "$REPORT"
+
+      # test-base-dir is also the trusted tree the policy is read from. The policy fails on
+      # existing violations too, so the unpinned server already in the base fails the run.
+      - name: Put a policy in the trusted tree
+        run: |
+          mkdir -p "$RUNNER_TEMP/base-head/.github"
+          printf '%s\n' '{"policyVersion": 1, "name": "action self-test", "existing": "fail", "mcp": {"requirePin": true}}' \
+            >"$RUNNER_TEMP/base-head/.github/agent-policy.json"
+      - name: Run with a policy
+        id: policy
+        uses: $/
+        continue-on-error: true
+        with:
+          path: test/fixtures/head
+          policy: .github/agent-policy.json
+          test-package: ${{ runner.temp }}/cli/agentcheckup.tgz
+          test-base-dir: ${{ runner.temp }}/base-head
+      - name: Check that the policy failed the run
+        env:
+          OUTCOME: ${{ steps.policy.outcome }}
+          EXIT_CODE: ${{ steps.policy.outputs.exit-code }}
+          VIOLATIONS: ${{ steps.policy.outputs.policy-violations }}
+          REPORT: ${{ steps.policy.outputs.report }}
+        run: |
+          set -x
+          test "$OUTCOME" = failure
+          test "$EXIT_CODE" = 1
+          test "$VIOLATIONS" -ge 1
+          expected=$(sha256sum "$RUNNER_TEMP/base-head/.github/agent-policy.json" | cut -d' ' -f1)
+          jq -e --arg sha "$expected" '.policy.sha256 == $sha' "$REPORT"
+          jq -e '[.policy.violations[].check] | index("mcp-unpinned") != null' "$REPORT"
 
       # On pull requests this fetches the real base commit; on pushes it scans without a baseline.
       - name: Run for this event
