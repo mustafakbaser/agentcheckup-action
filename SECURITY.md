@@ -15,7 +15,9 @@ In scope for this repository, among others:
 
 - The token reaching a process, file, log line or command line it should not reach
 - Code or configuration from the scanned repository being run, or shadowing agentcheckup
-- A pull request choosing its own baseline, or hiding a change from the gate
+- A pull request choosing its own baseline or policy, or hiding a change from the gate or the
+  policy
+- Review comments the action posts or deletes beyond its own suggestions
 - Files written outside the work directory, the workspace or the requested SARIF path
 - Workflow command or Markdown injection through the summary, annotations or the comment
 

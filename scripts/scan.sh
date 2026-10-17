@@ -5,7 +5,8 @@
 #
 # The CLI writes one format per run, so the head is scanned once per format: JSON (whose exit
 # code counts), Markdown, SARIF when requested, and GitHub annotations to the log. Scans are
-# deterministic, so every run sees the same result.
+# deterministic, so every run sees the same result. With a policy, every head run gets
+# --policy with the copy policy.sh made from the trusted tree.
 #
 # The CLI reports paths relative to its working directory, and annotations and SARIF need them
 # relative to the repository root. So each scan runs with the scanned tree's root as working
@@ -61,7 +62,7 @@ scan_dir() {
 }
 
 write_outputs() {
-  local code=$1 gate_hits='' new_findings='' report=''
+  local code=$1 gate_hits='' new_findings='' policy_violations='' report=''
   if [ -s "$head_json" ] && jq -e 'type == "object"' "$head_json" >/dev/null 2>&1; then
     report=$head_json
     gate_hits=$(jq -r '(.baseline.gate.hits // []) | length' "$head_json")
@@ -69,17 +70,15 @@ write_outputs() {
       if .baseline then (.baseline.findings.new // 0)
       else ((.summary.errors // 0) + (.summary.warnings // 0) + (.summary.infos // 0)) end' \
       "$head_json")
+    policy_violations=$(jq -r '[.policy.violations[]? | select(.fails == true)] | length' "$head_json")
   fi
   set_output exit-code "$code"
   set_output gate-hits "$gate_hits"
   set_output new-findings "$new_findings"
+  set_output policy-violations "$policy_violations"
   set_output report "$report"
-  printf 'agentcheckup exit code %s, gate hits %s, new findings %s.\n' \
-    "$code" "${gate_hits:-unknown}" "${new_findings:-unknown}"
-}
-
-summary() {
-  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then printf '%s\n' "$*" >>"$GITHUB_STEP_SUMMARY"; fi
+  printf 'agentcheckup exit code %s, gate hits %s, new findings %s, policy violations %s.\n' \
+    "$code" "${gate_hits:-unknown}" "${new_findings:-unknown}" "${policy_violations:-unknown}"
 }
 
 workspace=$(real_dir "$GITHUB_WORKSPACE") || fail "GITHUB_WORKSPACE is not a directory."
@@ -89,6 +88,13 @@ head_dir=$(scan_dir "$workspace") || fail "Input path leads outside the reposito
 # --- Base ---------------------------------------------------------------------------------------
 
 head_args=("${common[@]}" "--fail-on=$AC_FAIL_ON")
+# policy.sh checked the file and copied it into the work directory, outside the checkout. The
+# base scan runs without it: agentcheckup checks the baseline's inventory against the policy
+# itself.
+if [ -n "${AC_POLICY_FILE:-}" ]; then
+  if [ -L "$AC_POLICY_FILE" ] || [ ! -f "$AC_POLICY_FILE" ]; then fail "The policy file is missing."; fi
+  head_args+=("--policy=$AC_POLICY_FILE")
+fi
 if [ "$AC_BASELINE" != none ]; then
   base_root=$(real_dir "${AC_BASE_ROOT:-}") || fail "The base tree is missing."
   base_dir=$(scan_dir "$base_root") || fail "Input path leads outside the base tree: $AC_PATH"
@@ -117,6 +123,15 @@ fi
 echo "Scanning the head tree."
 run_cli_quiet "$workspace" "${head_args[@]}" --format=json "--output=$head_json" -- "$target"
 code=$status
+
+# The report must name the policy this action checked, byte for byte.
+if [ -n "${AC_POLICY_FILE:-}" ] && [ "$code" -lt 2 ]; then
+  reported=$(jq -r '.policy.sha256? // empty' "$head_json" 2>/dev/null) || reported=
+  if [ "$reported" != "${AC_POLICY_SHA256:-}" ]; then
+    error "The report does not show the policy this action checked (SHA-256 ${AC_POLICY_SHA256:-unknown}). Is the version input an agentcheckup version with --policy?"
+    code=3
+  fi
+fi
 
 # Another run failing (2 or 3) when the JSON run did not would be a CLI bug; keep the worse code.
 merge_status() {

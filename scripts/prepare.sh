@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Validates the inputs, creates a work directory under $RUNNER_TEMP and decides where the
-# baseline comes from. Reads the event payload with jq only.
+# baseline and the policy come from, and whether suggestions run. Reads the event payload with
+# jq only.
 set -euo pipefail
 # shellcheck source=scripts/lib.sh
 source "${BASH_SOURCE[0]%/*}/lib.sh"
@@ -36,10 +37,49 @@ case $fail_on in
   *) fail "Input fail-on must be error, warn, info or none. Got \"$(clip "$fail_on")\"." ;;
 esac
 
-case ${AC_COMMENT-} in
-  true | false) ;;
-  *) fail "Input comment must be true or false. Got \"$(clip "${AC_COMMENT-}")\"." ;;
+comment=${AC_COMMENT-}
+case $comment in
+  true | false | on-change) ;;
+  *) fail "Input comment must be true, false or on-change. Got \"$(clip "$comment")\"." ;;
 esac
+
+suggest=${AC_SUGGEST-}
+case $suggest in
+  true | false) ;;
+  *) fail "Input suggest must be true or false. Got \"$(clip "$suggest")\"." ;;
+esac
+
+# Policy: `policy` names a file in this repository's trusted tree; `policy-repository` with
+# `policy-path` and `policy-ref` a file in a central repository. policy-token itself never
+# reaches this step, only whether it is set.
+policy=${AC_POLICY-}
+policy_repository=${AC_POLICY_REPOSITORY-}
+policy_path=${AC_POLICY_PATH-}
+policy_ref=${AC_POLICY_REF-}
+if [ -n "$policy" ] && [ -n "$policy_repository" ]; then
+  fail "Inputs policy and policy-repository cannot be combined. Use policy for a file in this repository, or policy-repository with policy-path for a central policy."
+fi
+if [ -z "$policy_repository" ]; then
+  if [ -n "$policy_path" ] || [ -n "$policy_ref" ] || [ "${AC_POLICY_TOKEN_SET:-false}" = true ]; then
+    fail "Inputs policy-path, policy-ref and policy-token need policy-repository."
+  fi
+fi
+if [ -n "$policy" ]; then
+  policy_path=$(normalize_file_path "$policy") ||
+    fail "Input policy must be a file path inside the repository, with letters, digits, \".\", \"_\", \"-\", \"+\", \"@\" and \"/\" only, and without \"..\". Got \"$(clip "$policy")\"."
+fi
+if [ -n "$policy_repository" ]; then
+  if ! [[ $policy_repository =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+    fail "Input policy-repository must be owner/name. Got \"$(clip "$policy_repository")\"."
+  fi
+  if [ -z "$policy_path" ]; then fail "Input policy-repository needs policy-path."; fi
+  policy_path=$(normalize_file_path "$policy_path") ||
+    fail "Input policy-path must be a file path inside the policy repository, with letters, digits, \".\", \"_\", \"-\", \"+\", \"@\" and \"/\" only, and without \"..\". Got \"$(clip "${AC_POLICY_PATH-}")\"."
+  if [ -z "$policy_ref" ]; then policy_ref=HEAD; fi
+  if ! is_git_ref "$policy_ref"; then
+    fail "Input policy-ref must be a branch, a tag or a full commit SHA. Got \"$(clip "$policy_ref")\"."
+  fi
+fi
 
 targets=${AC_TARGETS-}
 targets=${targets//[[:space:]]/}
@@ -112,6 +152,7 @@ fi
 # --- Event -------------------------------------------------------------------------------------
 
 base_sha=
+head_sha=
 pr_number=
 same_repo=false
 case $GITHUB_EVENT_NAME in
@@ -121,6 +162,7 @@ case $GITHUB_EVENT_NAME in
   pull_request)
     require_env GITHUB_EVENT_PATH
     base_sha=$(jq -r '.pull_request.base.sha // empty' "$GITHUB_EVENT_PATH")
+    head_sha=$(jq -r '.pull_request.head.sha // empty' "$GITHUB_EVENT_PATH")
     pr_number=$(jq -r '.pull_request.number // empty' "$GITHUB_EVENT_PATH")
     same_repo=$(jq -r '
       (.pull_request.head.repo.full_name // "") as $head
@@ -157,6 +199,41 @@ else
   fi
 fi
 
+# The policy comes from a trusted tree, never from the workspace: the base commit on
+# pull_request and merge_group, the default branch (HEAD of the repository) otherwise, or the
+# central repository. test-base-dir stands for the base commit.
+policy_source=none
+policy_root=
+if [ -n "$policy" ]; then
+  policy_repository=$GITHUB_REPOSITORY
+  if [ -n "$test_base_dir" ]; then
+    policy_source=dir
+    policy_root=$test_base_dir
+  else
+    policy_source=tree
+    policy_root="$work/policy-tree"
+    policy_ref=${base_sha:-HEAD}
+  fi
+elif [ -n "$policy_repository" ]; then
+  policy_source=central
+  policy_root="$work/policy-tree"
+fi
+
+# Suggestions need a pull request whose token can write: same repository only.
+if [ "$suggest" = true ]; then
+  if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+    notice "suggest: true only applies to pull_request events. No suggestions."
+    suggest=false
+  elif [ "$same_repo" != true ]; then
+    notice "This pull request comes from a fork, and its token cannot write review comments. No suggestions."
+    suggest=false
+  elif ! is_sha "$head_sha"; then
+    notice "The pull_request event has no valid head commit SHA. No suggestions."
+    suggest=false
+  fi
+fi
+if [ "$suggest" != true ]; then head_sha=; fi
+
 set_output work-dir "$work"
 set_output path "$path"
 set_output gate "$gate"
@@ -169,3 +246,12 @@ set_output base-root "$base_root"
 set_output base-sha "$base_sha"
 set_output pr-number "$pr_number"
 set_output same-repo "$same_repo"
+set_output comment "$comment"
+set_output policy-source "$policy_source"
+set_output policy-repository "$policy_repository"
+set_output policy-path "$policy_path"
+set_output policy-ref "$policy_ref"
+set_output policy-root "$policy_root"
+set_output suggest "$suggest"
+set_output head-sha "$head_sha"
+set_output head-root "$work/head"

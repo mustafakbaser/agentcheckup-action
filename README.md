@@ -13,6 +13,9 @@ On a pull request it compares the head with the base commit and reports:
 
 The report goes to the job summary, and optionally to SARIF and a pull request comment. The
 check fails when there are new findings at or above `fail-on`, or when the gate trips.
+Optionally, it checks the repository against an [organization policy](#organization-policy)
+read from a trusted tree, and posts agentcheckup's safe fixes as
+[suggested changes](#suggested-fixes).
 
 ## Quick start
 
@@ -56,27 +59,36 @@ agentcheckup needs Node.js 22.12 or later. `actions/setup-node` makes sure of th
 
 ## Inputs
 
-| Input           | Default               | Description                                                                                                                                                                                      |
-| --------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `version`       | pinned by the release | Exact agentcheckup version, such as `0.1.0`. Ranges and tags such as `^0.1.0` or `latest` are rejected. The default is the version this release of the action was tested with; see `action.yml`. |
-| `path`          | `.`                   | Directory to scan, relative to the repository root. No `..`.                                                                                                                                     |
-| `gate`          | `security`            | Changes that fail the check on pull requests: `security` (all classes), `none`, or a comma-separated list of [gate classes](#gate-classes).                                                      |
-| `fail-on`       | `error`               | Fail on new findings at or above this severity: `error`, `warn`, `info` or `none`.                                                                                                               |
-| `sarif-file`    | empty                 | Also write SARIF to this path, for upload to code scanning. Relative paths start at the workspace. The directory must exist inside the workspace or `runner.temp`.                               |
-| `comment`       | `false`               | Create or update one pull request comment with the report. Needs `pull-requests: write`. Skipped for forks.                                                                                      |
-| `targets`       | all                   | Comma-separated agents to check against, for example `claude-code,codex,cursor`.                                                                                                                 |
-| `token`         | `github.token`        | Used only to fetch the base commit and to write the comment. agentcheckup never sees it.                                                                                                         |
-| `test-package`  | empty                 | Test only. See [Testing](#testing).                                                                                                                                                              |
-| `test-base-dir` | empty                 | Test only. See [Testing](#testing).                                                                                                                                                              |
+| Input               | Default               | Description                                                                                                                                                                                      |
+| ------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `version`           | pinned by the release | Exact agentcheckup version, such as `0.1.0`. Ranges and tags such as `^0.1.0` or `latest` are rejected. The default is the version this release of the action was tested with; see `action.yml`. |
+| `path`              | `.`                   | Directory to scan, relative to the repository root. No `..`.                                                                                                                                     |
+| `gate`              | `security`            | Changes that fail the check on pull requests: `security` (all classes), `none`, or a comma-separated list of [gate classes](#gate-classes).                                                      |
+| `fail-on`           | `error`               | Fail on new findings at or above this severity: `error`, `warn`, `info` or `none`.                                                                                                               |
+| `sarif-file`        | empty                 | Also write SARIF to this path, for upload to code scanning. Relative paths start at the workspace. The directory must exist inside the workspace or `runner.temp`.                               |
+| `comment`           | `false`               | Pull request comment with the report: `true`, `on-change` or `false`. See [Pull request comment](#pull-request-comment). Needs `pull-requests: write`. Skipped for forks.                        |
+| `suggest`           | `false`               | Post safe fixes as one review with suggested changes. See [Suggested fixes](#suggested-fixes). Needs `pull-requests: write`. Same-repository pull requests only. Never fails the check.          |
+| `policy`            | empty                 | Path of a policy file in this repository, read from the trusted tree, never from the pull request. See [Organization policy](#organization-policy). Not with `policy-repository`.                |
+| `policy-repository` | empty                 | `owner/name` of a central repository on the same GitHub server that holds the policy. Use with `policy-path`. Not with `policy`.                                                                 |
+| `policy-path`       | empty                 | Path of the policy file in `policy-repository`.                                                                                                                                                  |
+| `policy-ref`        | default branch        | Branch, tag or full commit SHA of `policy-repository`. A commit SHA pins the policy.                                                                                                             |
+| `policy-token`      | empty                 | Token that can read a private `policy-repository` (`contents: read`). Used only by the one fetch of the policy.                                                                                  |
+| `targets`           | all                   | Comma-separated agents to check against, for example `claude-code,codex,cursor`.                                                                                                                 |
+| `token`             | `github.token`        | Used only to fetch the base commit, the head commit and a `policy` from this repository, and to write the comment and suggestions. agentcheckup never sees it.                                   |
+| `test-package`      | empty                 | Test only. See [Testing](#testing).                                                                                                                                                              |
+| `test-base-dir`     | empty                 | Test only. See [Testing](#testing).                                                                                                                                                              |
+
+Policy paths may hold letters, digits, `.`, `_`, `-`, `+`, `@` and `/`, and no `..`.
 
 ## Outputs
 
-| Output         | Description                                                                                                                                                                     |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `exit-code`    | agentcheckup's exit code. See [Exit codes](#exit-codes).                                                                                                                        |
-| `gate-hits`    | Number of gate hits, one per change and class: a new unpinned server counts under both `mcp` and `mcp-unpinned`, while the summary shows it as one row. `0` without a baseline. |
-| `new-findings` | Number of findings not in the baseline. Without a baseline, every finding counts. Empty on errors.                                                                              |
-| `report`       | Path of the JSON report, in `runner.temp`. Empty when no report was written.                                                                                                    |
+| Output              | Description                                                                                                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `exit-code`         | agentcheckup's exit code. See [Exit codes](#exit-codes).                                                                                                                        |
+| `gate-hits`         | Number of gate hits, one per change and class: a new unpinned server counts under both `mcp` and `mcp-unpinned`, while the summary shows it as one row. `0` without a baseline. |
+| `new-findings`      | Number of findings not in the baseline. Without a baseline, every finding counts. Empty on errors.                                                                              |
+| `policy-violations` | Number of policy violations that fail the run. `0` without a policy and in audit mode. Empty on errors.                                                                         |
+| `report`            | Path of the JSON report, in `runner.temp`. Empty when no report was written.                                                                                                    |
 
 The action fails after it has written all outputs, the job summary, the SARIF file and the
 comment. To read the outputs of a failed run, give the step an `id` and
@@ -84,14 +96,14 @@ comment. To read the outputs of a failed run, give the step an `id` and
 
 ## Exit codes
 
-| Code | Meaning                                                                                     |
-| ---- | ------------------------------------------------------------------------------------------- |
-| 0    | No new findings at or above `fail-on`, and the gate did not trip.                           |
-| 1    | New findings at or above `fail-on`, or the gate tripped.                                    |
-| 2    | Invalid usage or configuration, or the action could not run (inputs, install, base commit). |
-| 3    | Internal error in agentcheckup.                                                             |
+| Code | Meaning                                                                                                                                |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | No new findings at or above `fail-on`, the gate did not trip, and no policy violation fails the run.                                   |
+| 1    | New findings at or above `fail-on`, the gate tripped, or a policy violation fails the run.                                             |
+| 2    | Invalid usage or configuration, or the action could not run (inputs, install, base commit, a missing, refused or invalid policy file). |
+| 3    | Internal error in agentcheckup.                                                                                                        |
 
-The step fails with the same code.
+The step fails with the same code. Suggestions and the comment never change it.
 
 ## Gate classes
 
@@ -135,11 +147,16 @@ no secrets.
    including with `persist-credentials: false`, and git never runs inside the checkout.
    `export-ignore` and `export-subst` are turned off, so the base branch's `.gitattributes` cannot
    hide files from the baseline.
-4. **Scan the base** with `--untrusted --no-gitignore --context --format json`. This report is
+4. **Export the policy** (with `policy` or `policy-repository`). The same export, limited to
+   one file with `git archive <sha> -- <path>`, from the trusted tree or the central repository.
+   The file is checked and copied into `runner.temp`; see [Organization policy](#organization-policy).
+5. **Scan the base** with `--untrusted --no-gitignore --context --format json`. This report is
    the baseline. The action never reads a baseline from the pull request.
-5. **Scan the head** with `--untrusted --no-gitignore --context --baseline <base.json>
---gate <gate> --fail-on <fail-on>`.
-6. **Report.** Job summary, outputs, SARIF and comment, then the step fails with the exit code.
+6. **Scan the head** with `--untrusted --no-gitignore --context --baseline <base.json>
+--gate <gate> --fail-on <fail-on>`, and `--policy <file>` when there is a policy.
+7. **Suggest** (with `suggest: true`). Export the head commit, fetch the diff, run
+   `agentcheckup fix --untrusted --format suggestions` on the head tree, post one review.
+8. **Report.** Job summary, outputs, SARIF and comment, then the step fails with the exit code.
 
 agentcheckup writes one format per run, so the head is scanned once per format: JSON (its exit
 code is the result), Markdown, SARIF when requested, and GitHub annotations into the log. With
@@ -189,15 +206,100 @@ When a code owner has reviewed and accepts such a change, someone allowed to byp
 merges it. If you prefer review alone to block merging, leave the check optional: code owner
 review is then the gate, and the failing check shows the reviewer what changed.
 
+## Organization policy
+
+An [agentcheckup policy](https://github.com/mustafakbaser/agentcheckup/blob/main/docs/policy.md)
+sets rules a repository must follow: allowed MCP servers, forbidden settings, denied tools and
+commands, required hooks and startup token budgets. A violation fails the run with exit code 1,
+unless the policy has `"mode": "audit"`, which reports violations and never fails. With a
+baseline and `"existing": "report"`, only violations the pull request adds fail.
+
+A policy only means something if the change under review cannot edit it, so the action never
+reads it from the workspace.
+
+### From this repository
+
+```yaml
+- uses: mustafakbaser/agentcheckup-action@v0.1.0
+  with:
+    policy: .github/agentcheckup-policy.json
+```
+
+The action reads the file from the trusted tree: the base commit on `pull_request` and
+`merge_group`, the default branch on other events. It exports only that file, as for the base
+commit, with `git archive <sha> -- <path>`.
+
+- **Bootstrap.** The file must exist in the trusted tree first. A pull request that adds the
+  policy and the workflow at once fails with exit code 2: merge the policy file first, then the
+  workflow that uses it.
+- **Changes.** When a pull request changes the policy file, the check still uses the base
+  version, and the job summary says "This pull request changes the policy; the check used the
+  base version." The new version applies once it is merged.
+
+### From a central repository
+
+```yaml
+- uses: mustafakbaser/agentcheckup-action@v0.1.0
+  with:
+    policy-repository: acme/agent-policy
+    policy-path: agentcheckup-policy.json
+    # A full commit SHA pins the policy. A branch or tag also works; the default is the
+    # repository's default branch.
+    policy-ref: 0123456789abcdef0123456789abcdef01234567
+    policy-token: ${{ secrets.AGENT_POLICY_TOKEN }} # only for a private repository
+```
+
+The policy is fetched into `runner.temp` by one `git fetch` of that ref, on the same GitHub
+server. `policy-token` reaches that fetch only, as an `http.extraheader` in environment
+variables: not on a command line, not in a file, masked in the log. A public policy repository
+needs no token, which also makes it work for forks.
+
+### Checks on the file
+
+- The file must be a regular file of at most 256 KiB. A symbolic link, a directory, or a path
+  through a symbolic link is refused with exit code 2.
+- A file missing from the trusted tree, or one agentcheckup cannot read as a policy, stops the
+  run with exit code 2.
+- The job summary shows where the policy came from, the commit it resolved to, and its SHA-256,
+  which equals `shasum -a 256` of the file and the `policy.sha256` field of the JSON report.
+- When a pull request changes the workflow that runs the check (`GITHUB_WORKFLOW_REF`), the
+  action adds a warning to the log and the job summary: that pull request also chooses the
+  check's inputs, the policy among them.
+
+### Enforcing it
+
+A required status check alone can be spoofed: a pull request can edit the workflow that runs it,
+for example to drop the `policy` input, and the check still passes under the same name. To
+enforce a policy:
+
+- require the workflow with an organization or repository ruleset ("Require workflows to pass
+  before merging") that runs it from a central repository at a pinned ref, so pull requests in
+  the checked repository cannot change it; or
+- protect `.github/workflows/` with CODEOWNERS and required code owner review, as above.
+
+The warning about a changed workflow is defense in depth, not a substitute.
+
 ## Pull requests from forks
 
-- The base commit comes from the base repository with the read-only token, so the comparison
-  works for forks.
-- Annotations and the job summary work.
-- No comment: the token of a fork pull request cannot write. The action says so in a notice.
-- SARIF upload needs `security-events: write`, which fork pull requests do not get. Skip the
-  upload step for forks, as in the example below.
-- Require approval for workflow runs from outside contributors (Settings, Actions, General).
+A pull request from a fork gets a read-only token and no secrets.
+
+| Feature                                          | On a fork pull request                                                                                            |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| Findings, the gate, annotations, the job summary | Yes. The base commit comes from the base repository with the read-only token.                                     |
+| `policy` (from the base commit)                  | Yes.                                                                                                              |
+| `policy-repository`, public                      | Yes, fetched without a token.                                                                                     |
+| `policy-repository`, private                     | Exit code 2: "Pull requests from forks get no secrets. Make the policy repository public, or use input `policy`." |
+| `comment`                                        | Skipped with a notice: the token cannot write.                                                                    |
+| `suggest`                                        | Skipped with a notice: the token cannot write.                                                                    |
+| SARIF upload                                     | Needs `security-events: write`, which forks do not get. Skip the upload step for forks, as in the example below.  |
+
+Require approval for workflow runs from outside contributors (Settings, Actions, General).
+
+**No `workflow_run` relay.** A common way to comment on fork pull requests is a second workflow,
+triggered by `workflow_run`, that reads an artifact the fork's run uploaded and writes with a
+privileged token. The fork's run controls that artifact, so the privileged workflow would post,
+or act on, whatever a forged artifact says. This action does not offer such a relay: on forks,
+the job summary and the annotations are the report.
 
 ## Code scanning (SARIF)
 
@@ -236,22 +338,74 @@ steps:
 ```
 
 The action keeps one comment per pull request, found by the hidden marker
-`<!-- agentcheckup-action -->`, and updates it on each run. It uses the `gh` CLI with the body
-in a file. Long reports are cut to fit GitHub's comment limit. When the comment cannot be
-written, for example on a fork or without `pull-requests: write`, the action writes a notice and
-the run continues.
+`<!-- agentcheckup-action -->` on a comment by the token's own login. It uses the `gh` CLI with
+the body in a file. Long reports are cut to fit GitHub's comment limit. When the comment cannot
+be written, for example on a fork or without `pull-requests: write`, the action writes a notice
+and the run continues.
+
+| `comment`   | What the action does                                                                                                                                                                                                                                                       |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `false`     | No comment.                                                                                                                                                                                                                                                                |
+| `true`      | Creates the comment, or updates it, on every run.                                                                                                                                                                                                                          |
+| `on-change` | Creates the comment only when the JSON report shows something to review: gate hits, new findings, policy violations that fail the run, or files this change makes an agent skip ("What this change makes each agent miss"). Otherwise it only updates an existing comment. |
+
+With `on-change`, a pull request that never needed review gets no comment. Once a comment
+exists, every later run updates it, so it never shows a stale result.
+
+## Suggested fixes
+
+```yaml
+permissions:
+  contents: read # check out the repository and fetch the base and head commits
+  pull-requests: write # read the diff, post and clean up suggestions
+steps:
+  # checkout and setup-node as in the quick start
+  - uses: mustafakbaser/agentcheckup-action@v0.1.0
+    with:
+      suggest: true
+```
+
+With `suggest: true`, the action posts agentcheckup's safe fixes as one pull request review
+with suggested changes, on lines the pull request changes. Reviewers apply them with GitHub's
+"Commit suggestion" button.
+
+1. It exports the head commit, `pull_request.head.sha`, like the base commit. The checkout is
+   usually a merge commit, whose line numbers can differ from the head's.
+2. It fetches the pull request's diff with
+   `gh api -H 'Accept: application/vnd.github.diff'`.
+3. It runs `agentcheckup fix --untrusted --format suggestions --diff <file>` on the head tree.
+   Only `safe` fixes are suggested, one verified round, and only on lines inside the diff;
+   agentcheckup makes at most 50 comments. Comments outside `path` are dropped.
+4. Each comment body ends with a marker line,
+   `<!-- agentcheckup-suggestion <rule ids> <hash> -->`. The action compares markers on the
+   last line of a body only, because the suggested lines are repository text and may contain
+   marker-like text. A suggestion whose marker is already on a review comment by the token's
+   login is not posted again. Such a comment whose marker the run no longer produces, because
+   the line changed or the fix was applied, is deleted.
+5. It posts the rest as one review with `event: COMMENT` and `commit_id` set to the head SHA.
+
+Suggestions never fail the check. A fork pull request, a diff too large for the API, an
+agentcheckup error (exit code 2 or 3), a rejected review (HTTP 422, for example when the pull
+request moved on during the run) or a missing permission each end with a notice. Suggestions
+run only on `pull_request` events from the same repository.
 
 ## Security
 
 - The action never runs code from the scanned repository. It does not use `npx` or anything else
   that resolves from the checkout. Only the agentcheckup process runs with the checkout as its
   working directory, started by absolute path.
-- The baseline is built by the action from the base commit. It is never read from the pull
+- The baseline is built by the action from the base commit, and the policy comes from the
+  base commit, the default branch or a central repository. Neither is ever read from the pull
   request.
-- The token reaches two places only. The base export gives it to one `git fetch` as an
-  `http.extraheader` in `GIT_CONFIG_*` environment variables: it is not written to any git
+- `token` reaches the export steps (base commit, head commit, a `policy` from this repository)
+  and the comment and suggestion steps, nothing else. Each export gives it to one `git fetch` as
+  an `http.extraheader` in `GIT_CONFIG_*` environment variables: it is not written to any git
   config, not put on a command line, and both the token and the encoded header are masked. The
-  comment step gives it to `gh`. The install and scan steps never have it.
+  comment and suggestion steps give it to `gh`; agentcheckup runs without it. `policy-token`
+  reaches only the one fetch of the central policy, the same way, and never reaches the
+  preparing step. The install and scan steps have no token.
+- Suggestions are compared by the marker on the last line of each comment body, so text in the
+  suggested lines cannot hide a suggestion or keep an outdated one alive.
 - `version` must be an exact version. npm checks the package's integrity.
 - All shell variables are quoted. Scripts use `set -euo pipefail`. No `${{ }}` expression
   appears inside a `run:` script.
@@ -260,29 +414,37 @@ the run continues.
 - agentcheckup escapes scanned text in annotations, Markdown and SARIF. The action also turns
   workflow commands off while the JSON, Markdown and SARIF runs execute.
 - The action writes only to a new directory under `runner.temp`, to the job summary, and to
-  `sarif-file`. It never writes `sarif-file` through a symlink.
+  `sarif-file`. It never writes `sarif-file` through a symlink. On GitHub, it writes only the
+  comment and the suggestions, and deletes only its own outdated suggestions.
 
 If you restrict actions to an allowlist, add `mustafakbaser/agentcheckup-action`. With
 `step-security/harden-runner` in block mode, allow `registry.npmjs.org:443` (install),
-`github.com:443` (base commit) and `api.github.com:443` (comment).
+`github.com:443` (base and head commits, policy) and `api.github.com:443` (comment, diff and
+suggestions).
 
 Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 ## Requirements
 
 - A Linux or macOS runner with bash, git 2.31 or later, jq, tar, Node.js 22.12 or later and npm.
-  GitHub-hosted runners have them; use `actions/setup-node` for Node.js. The comment needs `gh`.
+  GitHub-hosted runners have them; use `actions/setup-node` for Node.js. The comment and the
+  suggestions need `gh`; a policy needs `sha256sum` or `shasum`.
 - The repository checked out at the workspace root, which is the `actions/checkout` default.
-- agentcheckup 0.1.0 or later: earlier versions do not have `--context`, `--baseline` and `--gate`.
+- agentcheckup 0.1.0 or later: earlier versions do not have `--context`, `--baseline`, `--gate`,
+  `--policy` and `fix --format suggestions`.
 
 Windows runners are not supported.
 
 ## Testing
 
 - `test/scripts.sh` runs the scripts locally with a fake agentcheckup (`test/fake-cli.mjs`), a
-  fake `gh` and a git server reached through `file://`. It covers input validation, the base
-  export and token handling, outputs, exit codes, the summary size limit, SARIF handling and the
-  comment. No network.
+  fake `gh` and a git server reached through `file://`, with a central policy repository and a
+  "private" one that refuses fetches without a token. It covers input validation, the base,
+  head and policy exports and token handling, the policy checks (trusted tree, central
+  repository, symlinks, size, bootstrap, forks, audit mode, changed policy and workflow),
+  outputs, exit codes, the summary size limit, SARIF handling, the comment modes and the
+  suggestions (last-line markers, hostile bodies, outdated comments, 422 and other failures).
+  No network.
 - `.github/workflows/test.yml` runs the action itself on the fixtures in `test/fixtures`. The
   head adds an unpinned MCP server, a broad permission and an `ANTHROPIC_BASE_URL` override. The
   test checks that the gate trips with exit code 1, that an unchanged pair passes with 0, and
@@ -294,7 +456,8 @@ action through two test-only inputs:
 
 - `test-package`: absolute path to an agentcheckup `.tgz`, installed instead of the npm release.
 - `test-base-dir`: absolute path to a directory used as the base tree instead of the pull
-  request's base commit, so the test can choose both trees.
+  request's base commit, so the test can choose both trees. With `policy`, the policy is read
+  from it too.
 
 Both inputs only accept paths inside `runner.temp`. The workspace holds pull request content, and
 accepting paths there would let a pull request choose the code that runs or its own baseline. The

@@ -107,6 +107,108 @@ normalize_relative_path() {
   printf '%s' "$p"
 }
 
+# Prints a repository-relative file path in normal form, or fails: the rules of
+# normalize_relative_path, not the root, no "." or empty segment, and only letters, digits and
+# . _ - + @ /, so the path can go into Markdown, logs and git commands as it is.
+normalize_file_path() {
+  local p
+  p=$(normalize_relative_path "$1") || return 1
+  if [ "$p" = . ] || ! [[ $p =~ ^[A-Za-z0-9._@+/-]+$ ]]; then return 1; fi
+  case "/$p/" in
+    */./* | *//*) return 1 ;;
+  esac
+  printf '%s' "$p"
+}
+
+# A full commit SHA, or a branch or tag name such as main, v1 or refs/heads/main. HEAD names
+# the default branch. Nothing git could read as an option, a refspec or a revision expression.
+is_git_ref() {
+  local r=$1
+  if [[ $r =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then return 0; fi
+  if ! [[ $r =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]; then return 1; fi
+  case $r in
+    *..* | *//* | */ | *. | */.* | *.lock | *.lock/*) return 1 ;;
+  esac
+  return 0
+}
+
+# Whether $1 is a full commit SHA.
+is_sha() {
+  [[ $1 =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+}
+
+# The physical path of regular file $2 (relative) inside directory $1, or nothing when the file
+# is missing, a symlink or not a regular file, or when a directory on the way leads outside $1.
+regular_file_in() {
+  local root parent rel=$2
+  root=$(real_dir "$1") || return 0
+  if [ "${rel%/*}" = "$rel" ]; then
+    parent=$root
+  else
+    parent=$(real_dir "$root/${rel%/*}") || return 0
+    is_inside "$parent" "$root" || return 0
+  fi
+  if [ -L "$parent/${rel##*/}" ] || [ ! -f "$parent/${rel##*/}" ]; then return 0; fi
+  printf '%s' "$parent/${rel##*/}"
+}
+
+# The SHA-256 of file $1 in hex, as `shasum -a 256` prints it.
+file_sha256() {
+  local out
+  if command -v sha256sum >/dev/null 2>&1; then
+    out=$(sha256sum <"$1") || return 1
+  elif command -v shasum >/dev/null 2>&1; then
+    out=$(shasum -a 256 <"$1") || return 1
+  else
+    return 1
+  fi
+  out=${out%% *}
+  [[ $out =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s' "$out"
+}
+
+# Appends a line to the job summary, when there is one.
+summary() {
+  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then printf '%s\n' "$*" >>"$GITHUB_STEP_SUMMARY"; fi
+}
+
+# Points gh at this server with $GH_TOKEN: no prompts, no update check. gh reads the host and the
+# token from the environment.
+use_gh() {
+  local host=${GITHUB_SERVER_URL#*://}
+  host=${host%%/*}
+  export GH_HOST=$host GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1
+  if [ "$host" != github.com ]; then export GH_ENTERPRISE_TOKEN=$GH_TOKEN; fi
+}
+
+# The login of $GH_TOKEN. A user token can read /user, the workflow token cannot.
+token_login() {
+  local login
+  login=$(gh api user --jq .login 2>/dev/null) || login='github-actions[bot]'
+  if ! [[ $login =~ ^[A-Za-z0-9][A-Za-z0-9-]*(\[bot\])?$ ]]; then login='github-actions[bot]'; fi
+  printf '%s' "$login"
+}
+
+# For the suggestion steps, which never fail the check: fail() becomes a notice, and any exit,
+# expected or not, ends the step with status 0. Call it right after sourcing this file.
+never_fail() {
+  # Replaces fail() above for the rest of the script.
+  # shellcheck disable=SC2329
+  fail() {
+    notice "$1"
+    exit 0
+  }
+  trap never_fail_exit EXIT
+}
+never_fail_exit() {
+  local status=$?
+  trap - EXIT
+  if [ "$status" -ne 0 ]; then
+    notice "Suggestions stopped with exit code $status. They never fail the check."
+  fi
+  exit 0
+}
+
 # 32 random hex characters, for ::stop-commands:: tokens.
 random_token() {
   od -An -N16 -tx1 /dev/urandom | tr -d ' \n'

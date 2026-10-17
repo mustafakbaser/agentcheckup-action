@@ -40,10 +40,51 @@ inputs:
     default: ''
   comment:
     description: >-
-      Create or update one pull request comment with the report. Needs the permission
-      pull-requests write. Skipped for pull requests from forks.
+      Pull request comment with the report. "true" creates or updates one comment on every run.
+      "on-change" creates it only when there is something to review (gate hits, new findings,
+      failing policy violations, files the change makes an agent skip), and otherwise only
+      updates an existing one. "false" writes none. Needs the permission pull-requests write.
+      Skipped for pull requests from forks.
     required: false
     default: 'false'
+  suggest:
+    description: >-
+      Post agentcheckup's safe fixes as one pull request review with suggested changes on the
+      lines the pull request changes. Needs the permission pull-requests write. Same-repository
+      pull requests only; skipped with a notice for forks. Never fails the check.
+    required: false
+    default: 'false'
+  policy:
+    description: >-
+      Path of an agentcheckup policy file in this repository. Read from the trusted tree, never
+      from the workspace: the base commit on pull_request and merge_group, the default branch
+      otherwise, so the file must be merged before a workflow uses it. Cannot be combined with
+      policy-repository.
+    required: false
+    default: ''
+  policy-repository:
+    description: >-
+      owner/name of a central repository on this GitHub server that holds the policy. Use with
+      policy-path. Cannot be combined with policy.
+    required: false
+    default: ''
+  policy-path:
+    description: Path of the policy file in policy-repository.
+    required: false
+    default: ''
+  policy-ref:
+    description: >-
+      Branch, tag or full commit SHA of policy-repository to read. Default: its default branch.
+      A commit SHA pins the policy.
+    required: false
+    default: ''
+  policy-token:
+    description: >-
+      Token that can read policy-repository (contents read), needed when it is private. Used only
+      by the one fetch of the policy. Pull requests from forks get no secrets, so with a private
+      policy repository they fail with exit code 2.
+    required: false
+    default: ''
   targets:
     description: >-
       Comma-separated agents to check against, for example claude-code,codex,cursor. Default:
@@ -52,8 +93,9 @@ inputs:
     default: ''
   token:
     description: >-
-      Token used only to fetch the base commit and to write the optional comment. Never passed
-      to agentcheckup.
+      Token used only to fetch the base commit, the head commit and a policy from this
+      repository, and to write the optional comment and suggestions. Never passed to
+      agentcheckup.
     required: false
     default: ${{ github.token }}
   test-package:
@@ -65,19 +107,22 @@ inputs:
   test-base-dir:
     description: >-
       Test only, for this action's own self-test. Absolute path to a directory inside
-      runner.temp, used as the base tree instead of the pull request's base commit. Do not set
-      it in other workflows.
+      runner.temp, used as the base tree instead of the pull request's base commit, and as the
+      trusted tree for input policy. Do not set it in other workflows.
     required: false
     default: ''
 
 outputs:
   exit-code:
     description: >-
-      agentcheckup's exit code. 0 clean; 1 new findings at or above fail-on, or the gate
-      tripped; 2 invalid usage, or the action could not run; 3 internal error.
+      agentcheckup's exit code. 0 clean; 1 new findings at or above fail-on, the gate tripped,
+      or policy violations that fail the run; 2 invalid usage or policy, or the action could not
+      run; 3 internal error.
     value: >-
-      ${{ steps.scan.outputs.exit-code || steps.base.outputs.exit-code ||
-      steps.install.outputs.exit-code || steps.prepare.outputs.exit-code }}
+      ${{ steps.scan.outputs.exit-code || steps.policy.outputs.exit-code ||
+      steps.policy-central.outputs.exit-code || steps.policy-tree.outputs.exit-code ||
+      steps.base.outputs.exit-code || steps.install.outputs.exit-code ||
+      steps.prepare.outputs.exit-code }}
   gate-hits:
     description: >-
       Number of gate hits, one per change and class (a new unpinned MCP server counts under both
@@ -88,6 +133,11 @@ outputs:
       Number of findings not in the baseline. Without a baseline, every finding is new. Empty
       when no report was written.
     value: ${{ steps.scan.outputs.new-findings }}
+  policy-violations:
+    description: >-
+      Number of policy violations that fail the run. 0 without a policy and in audit mode. Empty
+      when no report was written.
+    value: ${{ steps.scan.outputs.policy-violations }}
   report:
     description: Path of the JSON report in runner.temp. Empty when no report was written.
     value: ${{ steps.scan.outputs.report }}
@@ -105,7 +155,14 @@ runs:
         AC_FAIL_ON: ${{ inputs.fail-on }}
         AC_SARIF_FILE: ${{ inputs.sarif-file }}
         AC_COMMENT: ${{ inputs.comment }}
+        AC_SUGGEST: ${{ inputs.suggest }}
         AC_TARGETS: ${{ inputs.targets }}
+        AC_POLICY: ${{ inputs.policy }}
+        AC_POLICY_REPOSITORY: ${{ inputs.policy-repository }}
+        AC_POLICY_PATH: ${{ inputs.policy-path }}
+        AC_POLICY_REF: ${{ inputs.policy-ref }}
+        # Whether policy-token is set, never the token itself.
+        AC_POLICY_TOKEN_SET: ${{ inputs.policy-token != '' }}
         AC_TEST_PACKAGE: ${{ inputs.test-package }}
         AC_TEST_BASE_DIR: ${{ inputs.test-base-dir }}
       run: bash "$GITHUB_ACTION_PATH/scripts/prepare.sh"
@@ -119,17 +176,63 @@ runs:
         AC_TEST_PACKAGE: ${{ steps.prepare.outputs.test-package }}
       run: bash "$GITHUB_ACTION_PATH/scripts/install.sh"
 
-    # The only step besides the comment that gets the token.
+    # Only the export steps, the suggestions and the comment get a token. Each export step gets
+    # one token, for one fetch.
     - name: Export the base commit
       id: base
       if: steps.prepare.outputs.baseline == 'fetch'
       shell: bash
       env:
         AC_WORK: ${{ steps.prepare.outputs.work-dir }}
-        AC_BASE_SHA: ${{ steps.prepare.outputs.base-sha }}
-        AC_BASE_ROOT: ${{ steps.prepare.outputs.base-root }}
+        AC_TREE_KIND: base
+        AC_TREE_REF: ${{ steps.prepare.outputs.base-sha }}
+        AC_TREE_DEST: ${{ steps.prepare.outputs.base-root }}
         AC_TOKEN: ${{ inputs.token }}
-      run: bash "$GITHUB_ACTION_PATH/scripts/export-base.sh"
+      run: bash "$GITHUB_ACTION_PATH/scripts/export-tree.sh"
+
+    - name: Export the policy from the trusted tree
+      id: policy-tree
+      if: steps.prepare.outputs.policy-source == 'tree'
+      shell: bash
+      env:
+        AC_WORK: ${{ steps.prepare.outputs.work-dir }}
+        AC_TREE_KIND: policy
+        AC_TREE_REF: ${{ steps.prepare.outputs.policy-ref }}
+        AC_TREE_PATH: ${{ steps.prepare.outputs.policy-path }}
+        AC_TREE_DEST: ${{ steps.prepare.outputs.policy-root }}
+        AC_TOKEN: ${{ inputs.token }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/export-tree.sh"
+
+    - name: Fetch the central policy
+      id: policy-central
+      if: steps.prepare.outputs.policy-source == 'central'
+      shell: bash
+      env:
+        AC_WORK: ${{ steps.prepare.outputs.work-dir }}
+        AC_TREE_KIND: policy-central
+        AC_TREE_REPOSITORY: ${{ steps.prepare.outputs.policy-repository }}
+        AC_TREE_REF: ${{ steps.prepare.outputs.policy-ref }}
+        AC_TREE_PATH: ${{ steps.prepare.outputs.policy-path }}
+        AC_TREE_DEST: ${{ steps.prepare.outputs.policy-root }}
+        AC_SAME_REPO: ${{ steps.prepare.outputs.same-repo }}
+        AC_TOKEN: ${{ inputs.policy-token }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/export-tree.sh"
+
+    - name: Check the policy
+      id: policy
+      if: steps.prepare.outputs.policy-source != 'none'
+      shell: bash
+      env:
+        AC_WORK: ${{ steps.prepare.outputs.work-dir }}
+        AC_POLICY_SOURCE: ${{ steps.prepare.outputs.policy-source }}
+        AC_POLICY_ROOT: ${{ steps.prepare.outputs.policy-root }}
+        AC_POLICY_PATH: ${{ steps.prepare.outputs.policy-path }}
+        AC_POLICY_REPOSITORY: ${{ steps.prepare.outputs.policy-repository }}
+        AC_POLICY_REF: ${{ steps.prepare.outputs.policy-ref }}
+        AC_POLICY_SHA: ${{ steps.policy-tree.outputs.sha || steps.policy-central.outputs.sha }}
+        AC_BASELINE: ${{ steps.prepare.outputs.baseline }}
+        AC_BASE_ROOT: ${{ steps.prepare.outputs.base-root }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/policy.sh"
 
     - name: Scan
       id: scan
@@ -145,13 +248,45 @@ runs:
         AC_SARIF_FILE: ${{ steps.prepare.outputs.sarif-file }}
         AC_BASELINE: ${{ steps.prepare.outputs.baseline }}
         AC_BASE_ROOT: ${{ steps.prepare.outputs.base-root }}
+        AC_POLICY_FILE: ${{ steps.policy.outputs.file }}
+        AC_POLICY_SHA256: ${{ steps.policy.outputs.sha256 }}
       run: bash "$GITHUB_ACTION_PATH/scripts/scan.sh"
 
-    - name: Comment on the pull request
-      if: inputs.comment == 'true'
+    # Suggestions never fail the check: both steps end with exit status 0, with a notice when
+    # something goes wrong.
+    - name: Export the head commit
+      id: head
+      if: steps.prepare.outputs.suggest == 'true'
       shell: bash
       env:
         AC_WORK: ${{ steps.prepare.outputs.work-dir }}
+        AC_TREE_KIND: head
+        AC_TREE_REF: ${{ steps.prepare.outputs.head-sha }}
+        AC_TREE_DEST: ${{ steps.prepare.outputs.head-root }}
+        AC_TOKEN: ${{ inputs.token }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/export-tree.sh"
+
+    - name: Suggest fixes
+      if: steps.prepare.outputs.suggest == 'true'
+      shell: bash
+      env:
+        AC_WORK: ${{ steps.prepare.outputs.work-dir }}
+        AC_CLI: ${{ steps.install.outputs.cli }}
+        AC_PATH: ${{ steps.prepare.outputs.path }}
+        AC_TARGETS: ${{ steps.prepare.outputs.targets }}
+        AC_PR_NUMBER: ${{ steps.prepare.outputs.pr-number }}
+        AC_HEAD_SHA: ${{ steps.prepare.outputs.head-sha }}
+        AC_HEAD_ROOT: ${{ steps.prepare.outputs.head-root }}
+        AC_HEAD_EXPORTED: ${{ steps.head.outputs.sha }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/suggest.sh"
+
+    - name: Comment on the pull request
+      if: steps.prepare.outputs.comment == 'true' || steps.prepare.outputs.comment == 'on-change'
+      shell: bash
+      env:
+        AC_WORK: ${{ steps.prepare.outputs.work-dir }}
+        AC_COMMENT_MODE: ${{ steps.prepare.outputs.comment }}
         AC_PR_NUMBER: ${{ steps.prepare.outputs.pr-number }}
         AC_SAME_REPO: ${{ steps.prepare.outputs.same-repo }}
         GH_TOKEN: ${{ inputs.token }}
@@ -165,7 +300,7 @@ runs:
         case $AC_EXIT_CODE in
           0) exit 0 ;;
           1)
-            echo "::error title=agentcheckup::New findings or a tripped gate. See the job summary."
+            echo "::error title=agentcheckup::New findings, a tripped gate or policy violations. See the job summary."
             exit 1
             ;;
           '' | *[!0-9]*)
