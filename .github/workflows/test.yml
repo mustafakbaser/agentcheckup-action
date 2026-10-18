@@ -19,10 +19,10 @@ defaults:
 # runner, not the copy in the workspace that earlier steps could change.
 
 env:
-  # The agentcheckup commit the "packed CLI" job builds. No npm release has --context,
-  # --baseline, --gate, --policy or suggestions yet, so the action gets that build through the
-  # test-only input test-package. See README.md, Testing.
-  AGENTCHECKUP_REF: ea2fdd7f60b0a423e2641d650814940801813b75
+  # The agentcheckup commit the "packed CLI" job builds: the v0.1.0 release, the version
+  # action.yml pins. The action gets that build through the test-only input test-package; the
+  # "npm release" job runs the published package. See README.md, Testing.
+  AGENTCHECKUP_REF: ce17fbefc935ca09d6274b956c9a1f829e86e2e2
 
 jobs:
   scripts:
@@ -261,31 +261,22 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-      # Until the version the action pins is published, this job only reports that and passes.
+      # The version the action pins must be on npm: users get it by default.
       - name: Check that the default version is on npm
-        id: published
         run: |
           version=$(sed -n "/^  version:/,/^  [a-z]/s/^    default: '\\(.*\\)'$/\\1/p" action.yml)
-          if npm view "agentcheckup@$version" version >/dev/null 2>&1; then
-            echo "available=true" >>"$GITHUB_OUTPUT"
-          else
-            echo "::notice title=agentcheckup::agentcheckup $version is not on npm yet; skipping this job."
-            echo "available=false" >>"$GITHUB_OUTPUT"
-          fi
+          npm view "agentcheckup@$version" version
       - name: Prepare the base tree
-        if: steps.published.outputs.available == 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/base-head/test/fixtures"
           cp -R test/fixtures/head "$RUNNER_TEMP/base-head/test/fixtures/head"
       - name: Run with the default version
-        if: steps.published.outputs.available == 'true'
         id: released
         uses: $/
         with:
           path: test/fixtures/head
           test-base-dir: ${{ runner.temp }}/base-head
       - name: Check the outputs
-        if: steps.published.outputs.available == 'true'
         env:
           EXIT_CODE: ${{ steps.released.outputs.exit-code }}
           GATE_HITS: ${{ steps.released.outputs.gate-hits }}
