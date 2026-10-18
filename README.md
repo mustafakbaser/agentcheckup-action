@@ -1,5 +1,9 @@
 # agentcheckup-action
 
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-agentcheckup-blue?logo=github)](https://github.com/marketplace/actions/agentcheckup)
+[![agentcheckup on npm](https://img.shields.io/npm/v/agentcheckup?label=agentcheckup)](https://www.npmjs.com/package/agentcheckup)
+[![Test](https://github.com/mustafakbaser/agentcheckup-action/actions/workflows/test.yml/badge.svg)](https://github.com/mustafakbaser/agentcheckup-action/actions/workflows/test.yml)
+
 The GitHub Action for [agentcheckup](https://github.com/mustafakbaser/agentcheckup). It checks
 the coding-agent configuration in a pull request: `AGENTS.md`, `CLAUDE.md`, skills, Cursor rules,
 MCP servers, hooks, permissions and env overrides.
