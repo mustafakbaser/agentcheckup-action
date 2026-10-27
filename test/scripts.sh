@@ -502,6 +502,11 @@ run_action "AC_TEST_BASE_DIR=$(base_dir base)" AC_GATE=none
 check "gate none: passes --gate=none" contains "$FAKE_LOG" '"--gate=none"'
 check "gate none: no gate hits" test "$(output gate-hits "$case_dir/out.scan")" = 0
 
+new_case gate-models
+run_action "AC_TEST_BASE_DIR=$(base_dir base)" 'AC_GATE=security, models'
+check "gate models: normalizes the list" test "$(output gate "$case_dir/out.prepare")" = security,models
+check "gate models: passes the list to the CLI" contains "$FAKE_LOG" '"--gate=security,models"'
+
 new_case plain
 export FAKE_SCENARIO=plain
 run_action

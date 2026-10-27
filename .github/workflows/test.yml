@@ -112,7 +112,33 @@ jobs:
           test "$NEW_FINDINGS" -ge 0
           jq -e '[.baseline.gate.hits[].class]
             | contains(["mcp-unpinned", "permissions", "env"])' "$REPORT"
+          # The head also adds an agent definition, and the default gate, security, leaves it out.
+          jq -e '[.baseline.gate.hits[].class] | index("models") == null' "$REPORT"
           jq -e '.version == "2.1.0"' "$RUNNER_TEMP/changed.sarif"
+
+      - name: Run with the models gate
+        id: models
+        uses: $/
+        continue-on-error: true
+        with:
+          path: test/fixtures/head
+          gate: models
+          test-package: ${{ runner.temp }}/cli/agentcheckup.tgz
+          test-base-dir: ${{ runner.temp }}/base-base
+      - name: Check that only the models gate tripped
+        env:
+          OUTCOME: ${{ steps.models.outcome }}
+          EXIT_CODE: ${{ steps.models.outputs.exit-code }}
+          GATE_HITS: ${{ steps.models.outputs.gate-hits }}
+          REPORT: ${{ steps.models.outputs.report }}
+        run: |
+          set -x
+          test "$OUTCOME" = failure
+          test "$EXIT_CODE" = 1
+          test "$GATE_HITS" -ge 1
+          jq -e '[.baseline.gate.hits[].class] | unique == ["models"]' "$REPORT"
+          jq -e 'any(.baseline.gate.hits[]; .change == "added"
+            and .id == "agent:test/fixtures/head/.claude/agents/reviewer.md@claude-code")' "$REPORT"
 
       - name: Run on unchanged configuration
         id: unchanged

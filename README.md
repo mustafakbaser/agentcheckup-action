@@ -457,9 +457,10 @@ Windows runners are not supported.
   suggestions (last-line markers, hostile bodies, outdated comments, 422 and other failures).
   No network.
 - `.github/workflows/test.yml` runs the action itself on the fixtures in `test/fixtures`. The
-  head adds an unpinned MCP server, a broad permission and an `ANTHROPIC_BASE_URL` override. The
-  test checks that the gate trips with exit code 1, that an unchanged pair passes with 0, and
-  that invalid inputs fail with 2.
+  head adds an unpinned MCP server, a broad permission, an `ANTHROPIC_BASE_URL` override and an
+  agent definition with a model. The test checks that the gate trips with exit code 1, that the
+  default gate leaves the agent definition out while `gate: models` trips on it alone, that an
+  unchanged pair passes with 0, and that invalid inputs fail with 2.
 
 The "Action with a packed CLI" job builds agentcheckup from source at `AGENTCHECKUP_REF` in the
 workflow, the commit of the release `action.yml` pins, and hands the tarball to the action through
