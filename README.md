@@ -454,9 +454,9 @@ Windows runners are not supported.
   test checks that the gate trips with exit code 1, that an unchanged pair passes with 0, and
   that invalid inputs fail with 2.
 
-No agentcheckup release on npm has `--context`, `--baseline` and `--gate` yet. So the test job
-packs agentcheckup from source (`AGENTCHECKUP_REF` in the workflow) and hands the tarball to the
-action through two test-only inputs:
+The "Action with a packed CLI" job builds agentcheckup from source at `AGENTCHECKUP_REF` in the
+workflow, the commit of the release `action.yml` pins, and hands the tarball to the action through
+two test-only inputs:
 
 - `test-package`: absolute path to an agentcheckup `.tgz`, installed instead of the npm release.
 - `test-base-dir`: absolute path to a directory used as the base tree instead of the pull
