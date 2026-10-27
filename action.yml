@@ -21,9 +21,10 @@ inputs:
     default: '.'
   gate:
     description: >-
-      Security-relevant changes that fail the check on pull requests. "security" for all
-      classes, "none", or a comma-separated list of mcp, mcp-unpinned, permissions, hooks, env
-      and unicode.
+      Changes that fail the check on pull requests. "security" for mcp, mcp-unpinned,
+      permissions, hooks, env and unicode; "none"; or a comma-separated list of these classes,
+      "security" and models. "security" does not include models: use "security,models" to gate
+      agent definitions and model settings too. models needs agentcheckup 0.2.0 or later.
     required: false
     default: 'security'
   fail-on:

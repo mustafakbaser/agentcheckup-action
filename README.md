@@ -67,7 +67,7 @@ agentcheckup needs Node.js 22.12 or later. `actions/setup-node` makes sure of th
 | ------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `version`           | pinned by the release | Exact agentcheckup version, such as `0.1.0`. Ranges and tags such as `^0.1.0` or `latest` are rejected. The default is the version this release of the action was tested with; see `action.yml`. |
 | `path`              | `.`                   | Directory to scan, relative to the repository root. No `..`.                                                                                                                                     |
-| `gate`              | `security`            | Changes that fail the check on pull requests: `security` (all classes), `none`, or a comma-separated list of [gate classes](#gate-classes).                                                      |
+| `gate`              | `security`            | Changes that fail the check on pull requests: `security` (every class but `models`), `none`, or a comma-separated list of [gate classes](#gate-classes), such as `security,models`.              |
 | `fail-on`           | `error`               | Fail on new findings at or above this severity: `error`, `warn`, `info` or `none`.                                                                                                               |
 | `sarif-file`        | empty                 | Also write SARIF to this path, for upload to code scanning. Relative paths start at the workspace. The directory must exist inside the workspace or `runner.temp`.                               |
 | `comment`           | `false`               | Pull request comment with the report: `true`, `on-change` or `false`. See [Pull request comment](#pull-request-comment). Needs `pull-requests: write`. Skipped for forks.                        |
@@ -111,7 +111,8 @@ The step fails with the same code. Suggestions and the comment never change it.
 
 ## Gate classes
 
-The gate looks at changes between the base commit and the head. Removals never trip it.
+The gate looks at changes between the base commit and the head. Removals never trip it, except
+a removed model setting under `models`: removing an override changes what runs.
 
 | Class          | Trips when                                                                                                                                                   |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -121,6 +122,12 @@ The gate looks at changes between the base commit and the head. Removals never t
 | `hooks`        | A hook is added or changed.                                                                                                                                  |
 | `env`          | An env override that sets an endpoint, a credential, TLS behavior or code execution is added or changed, for example `ANTHROPIC_BASE_URL` or `NODE_OPTIONS`. |
 | `unicode`      | A new hidden-Unicode finding appears.                                                                                                                        |
+| `models`       | An agent definition is added or changed, a definition runs on another model, or a setting that picks a model or an effort is set, changed or removed.        |
+
+`security` selects every class but `models`. To gate agent definitions and model settings as
+well, set `gate: security,models`; `models` needs agentcheckup 0.2.0 or later.
+[Agent definitions and models](https://github.com/mustafakbaser/agentcheckup/blob/main/docs/agents.md)
+lists the files and settings it reads for each agent.
 
 ## Events
 
@@ -435,7 +442,7 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
   suggestions need `gh`; a policy needs `sha256sum` or `shasum`.
 - The repository checked out at the workspace root, which is the `actions/checkout` default.
 - agentcheckup 0.1.0 or later: earlier versions do not have `--context`, `--baseline`, `--gate`,
-  `--policy` and `fix --format suggestions`.
+  `--policy` and `fix --format suggestions`. The `models` gate class needs 0.2.0 or later.
 
 Windows runners are not supported.
 
