@@ -164,11 +164,12 @@ jobs:
           jq -e '.baseline.gate.hits == []' "$REPORT"
 
       # test-base-dir is also the trusted tree the policy is read from. The policy fails on
-      # existing violations too, so the unpinned server already in the base fails the run.
+      # existing violations too, so the unpinned server already in the base fails the run, and
+      # so does the head's reviewer subagent, whose call starts with more than one token.
       - name: Put a policy in the trusted tree
         run: |
           mkdir -p "$RUNNER_TEMP/base-head/.github"
-          printf '%s\n' '{"policyVersion": 1, "name": "action self-test", "existing": "fail", "mcp": {"requirePin": true}}' \
+          printf '%s\n' '{"policyVersion": 1, "name": "action self-test", "existing": "fail", "mcp": {"requirePin": true}, "budgets": {"claude-code": {"subagentStartupTokens": 1}}}' \
             >"$RUNNER_TEMP/base-head/.github/agent-policy.json"
       - name: Run with a policy
         id: policy
@@ -193,6 +194,7 @@ jobs:
           expected=$(sha256sum "$RUNNER_TEMP/base-head/.github/agent-policy.json" | cut -d' ' -f1)
           jq -e --arg sha "$expected" '.policy.sha256 == $sha' "$REPORT"
           jq -e '[.policy.violations[].check] | index("mcp-unpinned") != null' "$REPORT"
+          jq -e '[.policy.violations[] | select(.check == "subagent-budget") | .entry] == ["reviewer"]' "$REPORT"
 
       # On pull requests this fetches the real base commit; on pushes it scans without a baseline.
       - name: Run for this event
