@@ -221,9 +221,10 @@ review is then the gate, and the failing check shows the reviewer what changed.
 
 An [agentcheckup policy](https://github.com/mustafakbaser/agentcheckup/blob/main/docs/policy.md)
 sets rules a repository must follow: allowed MCP servers, forbidden settings, denied tools and
-commands, required hooks and startup token budgets. A violation fails the run with exit code 1,
-unless the policy has `"mode": "audit"`, which reports violations and never fails. With a
-baseline and `"existing": "report"`, only violations the pull request adds fail.
+commands, required hooks, allowed models, and token budgets for what a session and each subagent
+call start with. A violation fails the run with exit code 1, unless the policy has
+`"mode": "audit"`, which reports violations and never fails. With a baseline and
+`"existing": "report"`, only violations the pull request adds fail.
 
 A policy only means something if the change under review cannot edit it, so the action never
 reads it from the workspace.
@@ -442,7 +443,8 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
   suggestions need `gh`; a policy needs `sha256sum` or `shasum`.
 - The repository checked out at the workspace root, which is the `actions/checkout` default.
 - agentcheckup 0.1.0 or later: earlier versions do not have `--context`, `--baseline`, `--gate`,
-  `--policy` and `fix --format suggestions`. The `models` gate class needs 0.2.0 or later.
+  `--policy` and `fix --format suggestions`. The `models` gate class needs 0.2.0 or later, and a
+  policy's `subagentStartupTokens` budget 0.3.0 or later.
 
 Windows runners are not supported.
 
