@@ -19,10 +19,10 @@ defaults:
 # runner, not the copy in the workspace that earlier steps could change.
 
 env:
-  # The agentcheckup commit the "packed CLI" job builds: the v0.2.0 release, the version
+  # The agentcheckup commit the "packed CLI" job builds: the v0.3.0 release, the version
   # action.yml pins. The action gets that build through the test-only input test-package; the
   # "npm release" job runs the published package. See README.md, Testing.
-  AGENTCHECKUP_REF: bf80f524d03f01f065ff187d4a6a0f78ddb4c948
+  AGENTCHECKUP_REF: bc29f0458b365d84b14688332eab83e07e3e63a1
 
 jobs:
   scripts:
