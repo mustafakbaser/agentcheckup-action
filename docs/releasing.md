@@ -53,6 +53,16 @@ gh release create "$version" --verify-tag --title "$version" --generate-notes
 The first release must be published to the GitHub Marketplace from the release page, with
 "Publish this Action to the GitHub Marketplace" checked. Later releases can do the same.
 
+Push the signed tag before you open the release page, and pick that existing tag there. For a tag
+that does not exist yet, the page creates an unsigned one on the current `main`, and once the
+release is published it cannot be moved. v0.4.0 was published that way before its commits
+reached `main`, so it runs the code of v0.3.1. Before you publish, both lines must show the same
+commit:
+
+```sh
+git ls-remote origin "refs/tags/$version^{}" refs/heads/main
+```
+
 Then move `v0` to the release commit:
 
 ```sh
