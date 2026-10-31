@@ -49,14 +49,14 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-      - uses: mustafakbaser/agentcheckup-action@v0.3.1
+      - uses: mustafakbaser/agentcheckup-action@v0.4.1
 ```
 
 Run the action right after checkout, before steps that install or build anything. It scans the
 workspace as it finds it, and generated files would show up as changes.
 
 Release tags are immutable. For a stricter pin, use the release's full commit SHA with the tag in
-a comment, `@<commit-sha> # v0.3.1`; Dependabot updates both. `@v0` follows the latest `0.x`
+a comment, `@<commit-sha> # v0.4.1`; Dependabot updates both. `@v0` follows the latest `0.x`
 release without review. [docs/releasing.md](docs/releasing.md) explains the tags.
 
 agentcheckup needs Node.js 22.12 or later. `actions/setup-node` makes sure of that.
@@ -233,7 +233,7 @@ reads it from the workspace.
 ### From this repository
 
 ```yaml
-- uses: mustafakbaser/agentcheckup-action@v0.3.1
+- uses: mustafakbaser/agentcheckup-action@v0.4.1
   with:
     policy: .github/agentcheckup-policy.json
 ```
@@ -252,7 +252,7 @@ commit, with `git archive <sha> -- <path>`.
 ### From a central repository
 
 ```yaml
-- uses: mustafakbaser/agentcheckup-action@v0.3.1
+- uses: mustafakbaser/agentcheckup-action@v0.4.1
   with:
     policy-repository: acme/agent-policy
     policy-path: agentcheckup-policy.json
@@ -322,7 +322,7 @@ permissions:
   security-events: write # upload SARIF
 steps:
   # checkout and setup-node as in the quick start
-  - uses: mustafakbaser/agentcheckup-action@v0.3.1
+  - uses: mustafakbaser/agentcheckup-action@v0.4.1
     id: agentcheckup
     with:
       sarif-file: ${{ runner.temp }}/agentcheckup.sarif
@@ -348,7 +348,7 @@ strategy:
     package: [api, web]
 steps:
   # checkout and setup-node as in the quick start
-  - uses: mustafakbaser/agentcheckup-action@v0.4.0
+  - uses: mustafakbaser/agentcheckup-action@v0.4.1
     with:
       path: packages/${{ matrix.package }}
       sarif-file: ${{ runner.temp }}/agentcheckup.sarif
@@ -369,7 +369,7 @@ permissions:
   pull-requests: write # create or update the agentcheckup comment
 steps:
   # checkout and setup-node as in the quick start
-  - uses: mustafakbaser/agentcheckup-action@v0.3.1
+  - uses: mustafakbaser/agentcheckup-action@v0.4.1
     with:
       comment: true
 ```
@@ -397,7 +397,7 @@ permissions:
   pull-requests: write # read the diff, post and clean up suggestions
 steps:
   # checkout and setup-node as in the quick start
-  - uses: mustafakbaser/agentcheckup-action@v0.3.1
+  - uses: mustafakbaser/agentcheckup-action@v0.4.1
     with:
       suggest: true
 ```
