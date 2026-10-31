@@ -142,7 +142,9 @@ if [ "$code" -lt 2 ]; then
   run_cli_quiet "$workspace" "${head_args[@]}" --format=markdown "--output=$head_md" -- "$target"
   merge_status
   if [ -n "${AC_SARIF_FILE:-}" ]; then
-    run_cli_quiet "$workspace" "${head_args[@]}" --format=sarif "--output=$head_sarif" -- "$target"
+    sarif_args=(--format=sarif "--output=$head_sarif")
+    if [ -n "${AC_SARIF_CATEGORY:-}" ]; then sarif_args+=("--sarif-category=$AC_SARIF_CATEGORY"); fi
+    run_cli_quiet "$workspace" "${head_args[@]}" "${sarif_args[@]}" -- "$target"
     merge_status
   fi
   # Annotations: this run prints workflow commands on purpose. The CLI escapes scanned text.

@@ -284,7 +284,7 @@ run_action() {
   local token_set=false p w policy_source
   if [ -n "$policy_token" ]; then token_set=true; fi
   local -a inputs=(AC_VERSION=0.1.0 AC_PATH=sub AC_GATE=security AC_FAIL_ON=error
-    AC_SARIF_FILE= AC_COMMENT=false AC_SUGGEST=false AC_TARGETS= AC_POLICY=
+    AC_SARIF_FILE= AC_SARIF_CATEGORY= AC_COMMENT=false AC_SUGGEST=false AC_TARGETS= AC_POLICY=
     AC_POLICY_REPOSITORY= AC_POLICY_PATH= AC_POLICY_REF= "AC_POLICY_TOKEN_SET=$token_set"
     "AC_TEST_PACKAGE=$RUNNER_TEMP/agentcheckup.tgz" AC_TEST_BASE_DIR= "$@")
   result=0
@@ -323,7 +323,8 @@ run_action() {
     "AC_CLI_VERSION=$(output cli-version "$case_dir/out.install")" \
     "AC_PATH=$(output path "$p")" "AC_GATE=$(output gate "$p")" \
     "AC_FAIL_ON=$(output fail-on "$p")" "AC_TARGETS=$(output targets "$p")" \
-    "AC_SARIF_FILE=$(output sarif-file "$p")" "AC_BASELINE=$(output baseline "$p")" \
+    "AC_SARIF_FILE=$(output sarif-file "$p")" "AC_SARIF_CATEGORY=$(output sarif-category "$p")" \
+    "AC_BASELINE=$(output baseline "$p")" \
     "AC_BASE_ROOT=$(output base-root "$p")" \
     "AC_POLICY_FILE=$(output file "$case_dir/out.policy")" \
     "AC_POLICY_SHA256=$(output sha256 "$case_dir/out.policy")" || { result=$?; return 0; }
@@ -398,6 +399,17 @@ rejects test-package-relative AC_TEST_PACKAGE=agentcheckup.tgz
 rejects policy-and-repository AC_POLICY=policy/agent-policy.json AC_POLICY_REPOSITORY=org/policies \
   AC_POLICY_PATH=agent-policy.json
 rejects policy-path-alone AC_POLICY_PATH=agent-policy.json
+rejects sarif-category-alone AC_VERSION=0.4.0 AC_SARIF_CATEGORY=web
+check "explains that sarif-category needs sarif-file" contains "$log" 'sarif-category needs sarif-file'
+n=0
+for category in 'a b' web/ packages//web /web "$(printf 'a%.0s' {1..101})"; do
+  n=$((n + 1))
+  rejects "sarif-category-$n" AC_VERSION=0.4.0 AC_SARIF_FILE=agentcheckup.sarif \
+    "AC_SARIF_CATEGORY=$category"
+  check "explains the sarif-category characters" contains "$log" 'Input sarif-category must be letters'
+done
+rejects sarif-category-old-cli AC_VERSION=0.3.1 AC_SARIF_FILE=agentcheckup.sarif AC_SARIF_CATEGORY=web
+check "explains that sarif-category needs 0.4.0" contains "$log" 'sarif-category needs agentcheckup 0.4.0 or later'
 rejects policy-ref-alone AC_POLICY_REF=main
 rejects policy-parent AC_POLICY=../policy.json
 rejects policy-absolute AC_POLICY=/etc/passwd
@@ -487,6 +499,20 @@ check "gate: head uses the baseline and gate" \
   jq -se '.[1:] | all(.argv | any(. == "--gate=security") and any(startswith("--baseline=")))' "$FAKE_LOG"
 check "gate: no policy without the input" jq -se 'all(.argv | any(startswith("--policy")) | not)' "$FAKE_LOG"
 check "gate: no token in the CLI environment" jq -se 'all(.tokenInEnv | not)' "$FAKE_LOG"
+check "gate: no --sarif-category without the input" \
+  jq -se 'all(.argv | any(startswith("--sarif-category")) | not)' "$FAKE_LOG"
+check "gate: SARIF has the default category" \
+  jq -e '.runs[0].automationDetails.id == "agentcheckup/"' "$RUNNER_TEMP/out.sarif"
+
+new_case sarif-category
+run_action AC_VERSION=0.4.0 "AC_TEST_BASE_DIR=$(base_dir head)" "AC_SARIF_FILE=$RUNNER_TEMP/out.sarif" \
+  AC_SARIF_CATEGORY=packages/web
+check "sarif-category: action succeeds" test "$result" -eq 0
+check "sarif-category: SARIF has the category" \
+  jq -e '.runs[0].automationDetails.id == "agentcheckup/packages/web/"' "$RUNNER_TEMP/out.sarif"
+check "sarif-category: passed to the SARIF run only" \
+  jq -se '[.[] | select(.argv | any(. == "--sarif-category=packages/web"))]
+    | length == 1 and all(.argv | any(. == "--format=sarif"))' "$FAKE_LOG"
 
 new_case clean
 run_action "AC_TEST_BASE_DIR=$(base_dir head)"

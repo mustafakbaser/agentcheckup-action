@@ -112,6 +112,20 @@ if [ -n "${AC_SARIF_FILE-}" ]; then
   sarif_file="$parent/$name"
 fi
 
+# sarif-category: agentcheckup's --sarif-category, which 0.4.0 added, with the characters and
+# length it takes. Checked here so that a wrong value fails before anything is installed.
+sarif_category=${AC_SARIF_CATEGORY-}
+if [ -n "$sarif_category" ]; then
+  if [ -z "$sarif_file" ]; then fail "Input sarif-category needs sarif-file."; fi
+  if [ "${#sarif_category}" -gt 100 ] ||
+    ! [[ $sarif_category =~ ^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$ ]]; then
+    fail "Input sarif-category must be letters, digits, \".\", \"_\" and \"-\", in parts separated by \"/\", at most 100 characters, such as api or packages/web. Got \"$(clip "$sarif_category")\"."
+  fi
+  if [[ $version =~ ^0\.([0-9]+)\. ]] && [ "${BASH_REMATCH[1]}" -lt 4 ]; then
+    fail "Input sarif-category needs agentcheckup 0.4.0 or later; input version is $version."
+  fi
+fi
+
 # Test-only inputs. Both must point into $RUNNER_TEMP: the workspace holds pull request content,
 # and a tarball or baseline from there would let the pull request choose the code or the baseline.
 test_package=
@@ -240,6 +254,7 @@ set_output gate "$gate"
 set_output fail-on "$fail_on"
 set_output targets "$targets"
 set_output sarif-file "$sarif_file"
+set_output sarif-category "$sarif_category"
 set_output test-package "$test_package"
 set_output baseline "$baseline"
 set_output base-root "$base_root"

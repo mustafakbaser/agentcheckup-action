@@ -111,6 +111,8 @@ for (const flag of ['no-gitignore', 'context']) {
 const format = options.get('format');
 if (!['json', 'markdown', 'sarif', 'github'].includes(format)) usage('bad --format');
 if (format !== 'github' && !options.has('output')) usage('missing --output');
+const category = options.get('sarif-category');
+if (category !== undefined && format !== 'sarif') usage('--sarif-category works only with --format sarif');
 if (options.has('gate') && !options.has('baseline')) usage('--gate needs --baseline');
 if (options.has('baseline')) {
   const baseline = JSON.parse(readFileSync(options.get('baseline'), 'utf8'));
@@ -216,7 +218,10 @@ const report = {
 
 let text;
 if (format === 'json') text = `${JSON.stringify(report, null, 2)}\n`;
-if (format === 'sarif') text = `${JSON.stringify({ version: '2.1.0', runs: [] })}\n`;
+if (format === 'sarif') {
+  const id = category === undefined ? 'agentcheckup/' : `agentcheckup/${category}/`;
+  text = `${JSON.stringify({ version: '2.1.0', runs: [{ automationDetails: { id } }] })}\n`;
+}
 if (format === 'markdown') {
   text = '';
   if (policy !== undefined) {

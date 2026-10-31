@@ -39,6 +39,15 @@ inputs:
       runner.temp.
     required: false
     default: ''
+  sarif-category:
+    description: >-
+      Category of the SARIF report, for scans whose results code scanning must keep apart, such
+      as one per package of a monorepo: the run's automationDetails.id becomes
+      agentcheckup/<category>/, which upload-sarif uses instead of its own category input.
+      Letters, digits, ".", "_" and "-", in parts separated by "/", at most 100 characters.
+      Needs sarif-file and agentcheckup 0.4.0 or later.
+    required: false
+    default: ''
   comment:
     description: >-
       Pull request comment with the report. "true" creates or updates one comment on every run.
@@ -155,6 +164,7 @@ runs:
         AC_GATE: ${{ inputs.gate }}
         AC_FAIL_ON: ${{ inputs.fail-on }}
         AC_SARIF_FILE: ${{ inputs.sarif-file }}
+        AC_SARIF_CATEGORY: ${{ inputs.sarif-category }}
         AC_COMMENT: ${{ inputs.comment }}
         AC_SUGGEST: ${{ inputs.suggest }}
         AC_TARGETS: ${{ inputs.targets }}
@@ -247,6 +257,7 @@ runs:
         AC_FAIL_ON: ${{ steps.prepare.outputs.fail-on }}
         AC_TARGETS: ${{ steps.prepare.outputs.targets }}
         AC_SARIF_FILE: ${{ steps.prepare.outputs.sarif-file }}
+        AC_SARIF_CATEGORY: ${{ steps.prepare.outputs.sarif-category }}
         AC_BASELINE: ${{ steps.prepare.outputs.baseline }}
         AC_BASE_ROOT: ${{ steps.prepare.outputs.base-root }}
         AC_POLICY_FILE: ${{ steps.policy.outputs.file }}

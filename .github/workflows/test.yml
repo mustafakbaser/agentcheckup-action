@@ -115,6 +115,7 @@ jobs:
           # The head also adds an agent definition, and the default gate, security, leaves it out.
           jq -e '[.baseline.gate.hits[].class] | index("models") == null' "$REPORT"
           jq -e '.version == "2.1.0"' "$RUNNER_TEMP/changed.sarif"
+          jq -e '.runs[0].automationDetails.id == "agentcheckup/"' "$RUNNER_TEMP/changed.sarif"
 
       - name: Run with the models gate
         id: models
@@ -123,6 +124,8 @@ jobs:
         with:
           path: test/fixtures/head
           gate: models
+          sarif-file: ${{ runner.temp }}/models.sarif
+          sarif-category: fixtures/head
           test-package: ${{ runner.temp }}/cli/agentcheckup.tgz
           test-base-dir: ${{ runner.temp }}/base-base
       - name: Check that only the models gate tripped
@@ -139,6 +142,8 @@ jobs:
           jq -e '[.baseline.gate.hits[].class] | unique == ["models"]' "$REPORT"
           jq -e 'any(.baseline.gate.hits[]; .change == "added"
             and .id == "agent:test/fixtures/head/.claude/agents/reviewer.md@claude-code")' "$REPORT"
+          jq -e '.runs[0].automationDetails.id == "agentcheckup/fixtures/head/"' \
+            "$RUNNER_TEMP/models.sarif"
 
       - name: Run on unchanged configuration
         id: unchanged

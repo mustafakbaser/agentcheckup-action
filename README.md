@@ -63,24 +63,25 @@ agentcheckup needs Node.js 22.12 or later. `actions/setup-node` makes sure of th
 
 ## Inputs
 
-| Input               | Default               | Description                                                                                                                                                                                      |
-| ------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `version`           | pinned by the release | Exact agentcheckup version, such as `0.1.0`. Ranges and tags such as `^0.1.0` or `latest` are rejected. The default is the version this release of the action was tested with; see `action.yml`. |
-| `path`              | `.`                   | Directory to scan, relative to the repository root. No `..`.                                                                                                                                     |
-| `gate`              | `security`            | Changes that fail the check on pull requests: `security` (every class but `models`), `none`, or a comma-separated list of [gate classes](#gate-classes), such as `security,models`.              |
-| `fail-on`           | `error`               | Fail on new findings at or above this severity: `error`, `warn`, `info` or `none`.                                                                                                               |
-| `sarif-file`        | empty                 | Also write SARIF to this path, for upload to code scanning. Relative paths start at the workspace. The directory must exist inside the workspace or `runner.temp`.                               |
-| `comment`           | `false`               | Pull request comment with the report: `true`, `on-change` or `false`. See [Pull request comment](#pull-request-comment). Needs `pull-requests: write`. Skipped for forks.                        |
-| `suggest`           | `false`               | Post safe fixes as one review with suggested changes. See [Suggested fixes](#suggested-fixes). Needs `pull-requests: write`. Same-repository pull requests only. Never fails the check.          |
-| `policy`            | empty                 | Path of a policy file in this repository, read from the trusted tree, never from the pull request. See [Organization policy](#organization-policy). Not with `policy-repository`.                |
-| `policy-repository` | empty                 | `owner/name` of a central repository on the same GitHub server that holds the policy. Use with `policy-path`. Not with `policy`.                                                                 |
-| `policy-path`       | empty                 | Path of the policy file in `policy-repository`.                                                                                                                                                  |
-| `policy-ref`        | default branch        | Branch, tag or full commit SHA of `policy-repository`. A commit SHA pins the policy.                                                                                                             |
-| `policy-token`      | empty                 | Token that can read a private `policy-repository` (`contents: read`). Used only by the one fetch of the policy.                                                                                  |
-| `targets`           | all                   | Comma-separated agents to check against, for example `claude-code,codex,cursor`.                                                                                                                 |
-| `token`             | `github.token`        | Used only to fetch the base commit, the head commit and a `policy` from this repository, and to write the comment and suggestions. agentcheckup never sees it.                                   |
-| `test-package`      | empty                 | Test only. See [Testing](#testing).                                                                                                                                                              |
-| `test-base-dir`     | empty                 | Test only. See [Testing](#testing).                                                                                                                                                              |
+| Input               | Default               | Description                                                                                                                                                                                                                                                                       |
+| ------------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `version`           | pinned by the release | Exact agentcheckup version, such as `0.1.0`. Ranges and tags such as `^0.1.0` or `latest` are rejected. The default is the version this release of the action was tested with; see `action.yml`.                                                                                  |
+| `path`              | `.`                   | Directory to scan, relative to the repository root. No `..`.                                                                                                                                                                                                                      |
+| `gate`              | `security`            | Changes that fail the check on pull requests: `security` (every class but `models`), `none`, or a comma-separated list of [gate classes](#gate-classes), such as `security,models`.                                                                                               |
+| `fail-on`           | `error`               | Fail on new findings at or above this severity: `error`, `warn`, `info` or `none`.                                                                                                                                                                                                |
+| `sarif-file`        | empty                 | Also write SARIF to this path, for upload to code scanning. Relative paths start at the workspace. The directory must exist inside the workspace or `runner.temp`.                                                                                                                |
+| `sarif-category`    | empty                 | Category of the SARIF report, for scans that code scanning must keep apart, such as one per package: `automationDetails.id` becomes `agentcheckup/<category>/`. Letters, digits, `.`, `_` and `-`, in parts separated by `/`. Needs `sarif-file` and agentcheckup 0.4.0 or later. |
+| `comment`           | `false`               | Pull request comment with the report: `true`, `on-change` or `false`. See [Pull request comment](#pull-request-comment). Needs `pull-requests: write`. Skipped for forks.                                                                                                         |
+| `suggest`           | `false`               | Post safe fixes as one review with suggested changes. See [Suggested fixes](#suggested-fixes). Needs `pull-requests: write`. Same-repository pull requests only. Never fails the check.                                                                                           |
+| `policy`            | empty                 | Path of a policy file in this repository, read from the trusted tree, never from the pull request. See [Organization policy](#organization-policy). Not with `policy-repository`.                                                                                                 |
+| `policy-repository` | empty                 | `owner/name` of a central repository on the same GitHub server that holds the policy. Use with `policy-path`. Not with `policy`.                                                                                                                                                  |
+| `policy-path`       | empty                 | Path of the policy file in `policy-repository`.                                                                                                                                                                                                                                   |
+| `policy-ref`        | default branch        | Branch, tag or full commit SHA of `policy-repository`. A commit SHA pins the policy.                                                                                                                                                                                              |
+| `policy-token`      | empty                 | Token that can read a private `policy-repository` (`contents: read`). Used only by the one fetch of the policy.                                                                                                                                                                   |
+| `targets`           | all                   | Comma-separated agents to check against, for example `claude-code,codex,cursor`.                                                                                                                                                                                                  |
+| `token`             | `github.token`        | Used only to fetch the base commit, the head commit and a `policy` from this repository, and to write the comment and suggestions. agentcheckup never sees it.                                                                                                                    |
+| `test-package`      | empty                 | Test only. See [Testing](#testing).                                                                                                                                                                                                                                               |
+| `test-base-dir`     | empty                 | Test only. See [Testing](#testing).                                                                                                                                                                                                                                               |
 
 Policy paths may hold letters, digits, `.`, `_`, `-`, `+`, `@` and `/`, and no `..`.
 
@@ -335,6 +336,30 @@ steps:
 
 Write the SARIF file to `runner.temp`, not into the checkout. When a scan fails, the action
 removes any file at `sarif-file`, so the upload cannot pick up a stale or planted one.
+
+To scan several packages of a monorepo in one workflow, give each scan its own `sarif-category`.
+Code scanning keeps one analysis per tool and category, so without it each upload replaces the
+others' results. The category goes into the report's `automationDetails.id`, which `upload-sarif`
+uses instead of its own `category` input.
+
+```yaml
+strategy:
+  matrix:
+    package: [api, web]
+steps:
+  # checkout and setup-node as in the quick start
+  - uses: mustafakbaser/agentcheckup-action@v0.4.0
+    with:
+      path: packages/${{ matrix.package }}
+      sarif-file: ${{ runner.temp }}/agentcheckup.sarif
+      sarif-category: ${{ matrix.package }}
+  - if: >-
+      !cancelled() && (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+    with:
+      sarif_file: ${{ runner.temp }}/agentcheckup.sarif
+```
 
 ## Pull request comment
 
